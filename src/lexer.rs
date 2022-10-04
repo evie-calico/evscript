@@ -16,6 +16,12 @@ pub enum Token {
 	Pool,
 	Terminator,
 	// Simple tokens
+	Plus,
+	Minus,
+	Star,
+	Slash,
+	Percent,
+	Equal,
 	Semicolon,
 	LeftCurlyBrace,
 	RightCurlyBrace,
@@ -27,6 +33,41 @@ pub enum Token {
 	InlineAssembly(String),
 
 	Eof,
+}
+
+impl fmt::Display for Token {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		match self {
+			// Keywords
+			Token::Environment => write!(f, "env"),
+			Token::Function => write!(f, "fn"),
+			Token::Include => write!(f, "include"),
+			Token::Asm => write!(f, "asm"),
+			Token::Use => write!(f, "use"),
+			Token::Def => write!(f, "def"),
+			Token::Mac => write!(f, "mac"),
+			Token::Pool => write!(f, "pool"),
+			Token::Terminator => write!(f, "terminator"),
+			// Simple tokens
+			Token::Plus => write!(f, "+"),
+			Token::Minus => write!(f, "-"),
+			Token::Star => write!(f, "*"),
+			Token::Slash => write!(f, "/"),
+			Token::Percent => write!(f, "%"),
+			Token::Equal => write!(f, "="),
+			Token::Semicolon => write!(f, ";"),
+			Token::LeftCurlyBrace => write!(f, "{{"),
+			Token::RightCurlyBrace => write!(f, "}}"),
+			Token::LeftParenthesis => write!(f, "("),
+			Token::RightParenthesis => write!(f, ")"),
+			// Complex tokens
+			Token::Identifier(identifier) => write!(f, "identifier \"{identifier}\""),
+			Token::String(string) => write!(f, "string \"{string}\""),
+			Token::InlineAssembly(..) => write!(f, "inline assembly"),
+
+			Token::Eof => write!(f, "end of file (EOF)"),
+		}
+	}
 }
 
 pub struct Location {
@@ -121,6 +162,34 @@ pub fn lex(input: &mut Peekable<Chars>, location: &mut Location) -> Result<Token
 						get_next(input)?;
 						mode = Mode::String;
 					}
+					';' => {
+						get_next(input)?;
+						return Ok(Token::Semicolon);
+					}
+					'+' => {
+						get_next(input)?;
+						return Ok(Token::Plus);
+					}
+					'-' => {
+						get_next(input)?;
+						return Ok(Token::Minus);
+					}
+					'*' => {
+						get_next(input)?;
+						return Ok(Token::Star);
+					}
+					'/' => {
+						get_next(input)?;
+						return Ok(Token::Slash);
+					}
+					'%' => {
+						get_next(input)?;
+						return Ok(Token::Percent);
+					}
+					'=' => {
+						get_next(input)?;
+						return Ok(Token::Equal);
+					}
 					'{' => {
 						get_next(input)?;
 						return Ok(Token::LeftCurlyBrace);
@@ -136,10 +205,6 @@ pub fn lex(input: &mut Peekable<Chars>, location: &mut Location) -> Result<Token
 					')' => {
 						get_next(input)?;
 						return Ok(Token::RightParenthesis);
-					}
-					';' => {
-						get_next(input)?;
-						return Ok(Token::Semicolon);
 					}
 					'#' => {
 						get_next(input)?;

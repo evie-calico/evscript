@@ -1,31 +1,18 @@
-use evscript::lexer::Location;
-use evscript::parser::parse;
+extern crate lalrpop_util;
+
+use lalrpop_util::lalrpop_mod;
+
+lalrpop_mod!(pub parser);
 
 use std::process::exit;
 
 fn main() {
-	let mut loc = Location::new("<test>");
-
-	match parse(&mut "
-		#asm
-			include \"hardware.inc\"
-		#end
-
-		include asm \"hardware.inc\"
-
-		env script {
-			use std;
-		}
-
-		script fn Main {
-			u8 var;
-		}
-		".chars().peekable(),
-		&mut loc
-	) {
+	let input = "env name { def hi(); def bye(); }";
+	let result = parser::EnvParser::new().parse(input);
+	match result {
 		Ok(ast) => println!("{ast:#?}"),
 		Err(err) => {
-			eprintln!("{loc}: {err}");
+			eprintln!("<test>: {err}");
 			exit(1);
 		}
 	}
@@ -54,6 +41,18 @@ mod tests {
 
 			script fn Main {}
 			".chars().peekable();
+
+		if let Err(err) = parse(&mut input, &mut loc){
+			eprintln!("{loc}: {err}");
+			panic!("{loc}: {err}");
+		}
+	}
+
+	#[test]
+	fn syntax() {
+		// Test all basic lexing & parsing.
+		let mut loc = Location::new("<expression test>");
+		let mut input = "script fn Main { x + y; }".chars().peekable();
 
 		if let Err(err) = parse(&mut input, &mut loc){
 			eprintln!("{loc}: {err}");
