@@ -1,0 +1,196 @@
+use std::str::FromStr;
+
+use crate::parser::*;
+use lalrpop_util::ParseError;
+
+grammar;
+
+match {
+	"+", "-", "*", "/", "%", "&", "^", "|", "<<", ">>", "!",
+	"==", "!=", "<", ">", "<=", ">=", "&&", "||",
+	"=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=",
+	"...",
+	"(", ")", "{", "}",
+	r"[a-zA-Z_][a-zA-Z0-9_]*",
+	r#""([^"]|\.)*""#,
+	r"[0-9]+",
+	r"-[0-9]+",
+	";", ",",
+	"fn", "env", "use", "include", "def", "alias", "macro", "pool", "terminator",
+	"return", "yield",
+	"if", "else", "while", "do", "for", "repeat", "loop",
+	r"#asm[^#]*#end",
+
+	// Skip whitespace and comments
+	r"\s*" => { },
+	r"//[^\n\r]*[\n\r]*" => { }, // `// comment`
+	r"/\*([^\*]*\*+[^\*/])*([^\*]*\*+|[^\*])*\*/" => { }, // `/* comment */`
+}
+
+pub File = { <Root*> }
+
+Root: Root = {
+	<environment:Iden> "fn" <name:Iden> "(" <args:Comma<Iden>> ")" "{" <contents:Statement*> "}" => {
+		Root::Function( Function { name, environment, args, contents } )
+	},
+	"env" <name:Iden> "{" <contents:Statement*> "}" => {
+		Root::Environment( Environment { name, contents } )
+	},
+	r"#asm[^#]*#end" => Root::Assembly(String::from(<>)),
+	"include" <path:String> ";" => Root::Include(path),
+}
+
+Statement: Statement = {
+	"def" <name:Iden> "(" <args:Comma<Iden>> ")" ";" => {
+		Statement::Def(Def { name, args })
+	},
+	"alias" <name:Iden> "(" <args:Comma<Iden>> ")" "=" <target:Iden> "(" <target_args:Comma<Iden>> ")" ";" => {
+		Statement::Alias(Alias { name, args, target, target_args })
+	},
+	"macro" <name:Iden> "(" <args:Comma<Iden>> ")" "=" <target:Iden> ";" => {
+		Statement::Macro(Macro { name, args, target, varargs: false })
+	},
+	"macro" <name:Iden> "(" <args:Comma<Iden>> "..." ")" "=" <target:Iden> ";" => {
+		Statement::Macro(Macro { name, args, target, varargs: true })
+	},
+	"use" <env:Iden> ";" => Statement::Use(env),
+	"pool" "=" <expr:Expr> ";" => Statement::Pool(expr),
+	"terminator" "=" <name:Iden> ";" => Statement::Terminator(name),
+	"terminator" "=" "return" ";" => Statement::Terminator(String::from("return")),
+
+	<expr:Expr> ";" => Statement::Expression(expr),
+	<t:Iden> <i:Iden> ";" => Statement::Declaration(t, i),
+	<t:Iden> <a:Assignment> => Statement::DeclareAssign(t, Box::new(a)),
+	Assignment,
+	IfContainer,
+	"while" <cond:Expr> "{" <contents:Statement*> "}" => Statement::While(cond, contents),
+	"do" "{" <contents:Statement*> "}" "while" <cond:Expr> ";" => Statement::Do(cond, contents),
+	"for" <pro:Statement> <cond:Expr> ";" <epi:Statement> "{" <contents:Statement*> "}" => Statement::For(Box::new(pro), cond, Box::new(epi), contents),
+	"repeat" <cond:Expr> "{" <contents:Statement*> "}" => Statement::Repeat(None, cond, contents),
+	"repeat" <name:Iden> "," <cond:Expr> "{" <contents:Statement*> "}" => Statement::Repeat(Some(name), cond, contents),
+	"loop" "{" <contents:Statement*> "}" => Statement::Loop(contents),
+
+	"return" ";" => Statement::Expression(Rpn::Call(String::from("return"), vec![])),
+	"yield" ";" => Statement::Expression(Rpn::Call(String::from("yield"), vec![])),
+}
+
+IfContainer: Statement = {
+	"if" <cond:Expr> "{" <contents:Statement*> "}" => Statement::If(cond, contents, None),
+	"if" <cond:Expr> "{" <contents:Statement*> "}" "else" "{" <else_contents:Statement*> "}" => Statement::If(cond, contents, Some(else_contents)),
+	"if" <cond:Expr> "{" <contents:Statement*> "}" "else" <else_contents:IfContainer> => Statement::If(cond, contents, Some(vec![else_contents])),
+}
+
+Assignment: Statement = {
+	<l:Iden> "=" <r:Expr> ";" => Statement::Expression(Rpn::Set(l, Box::new(r))),
+	<l:Iden> "+=" <r:Expr> ";" => Statement::Expression(Rpn::Set(l.clone(), Box::new(Rpn::Add(Box::new(Rpn::Variable(l)), Box::new(r))))),
+	<l:Iden> "-=" <r:Expr> ";" => Statement::Expression(Rpn::Set(l.clone(), Box::new(Rpn::Sub(Box::new(Rpn::Variable(l)), Box::new(r))))),
+	<l:Iden> "*=" <r:Expr> ";" => Statement::Expression(Rpn::Set(l.clone(), Box::new(Rpn::Mul(Box::new(Rpn::Variable(l)), Box::new(r))))),
+	<l:Iden> "/=" <r:Expr> ";" => Statement::Expression(Rpn::Set(l.clone(), Box::new(Rpn::Div(Box::new(Rpn::Variable(l)), Box::new(r))))),
+	<l:Iden> "%=" <r:Expr> ";" => Statement::Expression(Rpn::Set(l.clone(), Box::new(Rpn::Mod(Box::new(Rpn::Variable(l)), Box::new(r))))),
+	<l:Iden> "&=" <r:Expr> ";" => Statement::Expression(Rpn::Set(l.clone(), Box::new(Rpn::BinaryAnd(Box::new(Rpn::Variable(l)), Box::new(r))))),
+	<l:Iden> "|=" <r:Expr> ";" => Statement::Expression(Rpn::Set(l.clone(), Box::new(Rpn::BinaryOr(Box::new(Rpn::Variable(l)), Box::new(r))))),
+	<l:Iden> "^=" <r:Expr> ";" => Statement::Expression(Rpn::Set(l.clone(), Box::new(Rpn::BinaryXor(Box::new(Rpn::Variable(l)), Box::new(r))))),
+	<l:Iden> "<<=" <r:Expr> ";" => Statement::Expression(Rpn::Set(l.clone(), Box::new(Rpn::ShiftLeft(Box::new(Rpn::Variable(l)), Box::new(r))))),
+	<l:Iden> ">>=" <r:Expr> ";" => Statement::Expression(Rpn::Set(l.clone(), Box::new(Rpn::ShiftRight(Box::new(Rpn::Variable(l)), Box::new(r))))),
+}
+
+Expr = { LogicalOr }
+
+LogicalOr: Rpn = {
+	<l:LogicalOr> "||" <r:LogicalAnd> => Rpn::LogicalOr(Box::new(l), Box::new(r)),
+	LogicalAnd,
+}
+
+LogicalAnd: Rpn = {
+	<l:LogicalAnd> "&&" <r:Compare> => Rpn::LogicalAnd(Box::new(l), Box::new(r)),
+	Compare,
+}
+
+Compare: Rpn = {
+	<l:Compare> "==" <r:BinaryOr> => Rpn::Equ(Box::new(l), Box::new(r)),
+	<l:Compare> "!=" <r:BinaryOr> => Rpn::NotEqu(Box::new(l), Box::new(r)),
+	<l:Compare> "<" <r:BinaryOr> => Rpn::LessThan(Box::new(l), Box::new(r)),
+	<l:Compare> "<=" <r:BinaryOr> => Rpn::LessThanEqu(Box::new(l), Box::new(r)),
+	<l:Compare> ">" <r:BinaryOr> => Rpn::GreaterThan(Box::new(l), Box::new(r)),
+	<l:Compare> ">=" <r:BinaryOr> => Rpn::GreaterThanEqu(Box::new(l), Box::new(r)),
+	BinaryOr,
+}
+
+BinaryOr: Rpn = {
+	<l:BinaryOr> "|" <r:BinaryXor> => Rpn::BinaryOr(Box::new(l), Box::new(r)),
+	BinaryXor,
+}
+
+BinaryXor: Rpn = {
+	<l:BinaryAnd> "^" <r:BinaryAnd> => Rpn::BinaryXor(Box::new(l), Box::new(r)),
+	BinaryAnd,
+}
+
+BinaryAnd: Rpn = {
+	<l:BinaryAnd> "&" <r:Shift> => Rpn::BinaryAnd(Box::new(l), Box::new(r)),
+	Shift,
+}
+
+Shift: Rpn = {
+	<l:Shift> "<<" <r:Addition> => Rpn::ShiftLeft(Box::new(l), Box::new(r)),
+	<l:Shift> ">>" <r:Addition> => Rpn::ShiftRight(Box::new(l), Box::new(r)),
+	Addition,
+}
+
+Addition: Rpn = {
+	<l:Addition> "+" <r:Factor> => Rpn::Add(Box::new(l), Box::new(r)),
+	<l:Addition> "-" <r:Factor> => Rpn::Sub(Box::new(l), Box::new(r)),
+	Factor,
+};
+
+Factor: Rpn = {
+	<l:Factor> "*" <r:Unary> => Rpn::Mul(Box::new(l), Box::new(r)),
+	<l:Factor> "/" <r:Unary> => Rpn::Div(Box::new(l), Box::new(r)),
+	<l:Factor> "%" <r:Unary> => Rpn::Mod(Box::new(l), Box::new(r)),
+	Unary,
+};
+
+Unary: Rpn = {
+	"-" <l:Term> => Rpn::Negate(Box::new(l)),
+	"!" <l:Term> => Rpn::Not(Box::new(l)),
+	"*" <l:Term> => Rpn::Deref(Box::new(l)),
+	"&" <l:Iden> => Rpn::Address(l),
+	Term,
+};
+
+Term: Rpn = {
+	Num,
+	String => Rpn::String(<>),
+	Iden => Rpn::Variable(<>),
+	"(" <Expr> ")",
+	<i:Iden> "(" <args:Comma<Expr>> ")" => Rpn::Call(i, args)
+};
+
+Num: Rpn = {
+	r"[0-9]+" =>? Ok(Rpn::Unsigned(u64::from_str(<>)
+		.map_err(|_| ParseError::User {
+			error: "Unsigned number is too large (maximum of 64 bits)"
+		})?)),
+	r"-[0-9]+" =>? Ok(Rpn::Signed(i64::from_str(<>)
+		.map_err(|_| ParseError::User {
+			error: "Signed number is too large (maximum of 64 bits)"
+		})?)),
+};
+
+Iden: String = {
+	r"[a-zA-Z_][a-zA-Z0-9_]*" => String::from(<>),
+};
+
+String: String = {
+	r#""([^"]|\.)*""# => String::from(<>),
+}
+
+Comma<T>: Vec<T> = {
+    <mut v:(<T> ",")*> <e:T?> => match e {
+        None => v,
+        Some(e) => {
+            v.push(e);
+            v
+        }
+    }
+};
