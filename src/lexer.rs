@@ -1,8 +1,11 @@
+use std::collections::HashMap;
+use std::fmt;
 use std::iter::Peekable;
 use std::str::Chars;
 
 #[derive(Debug, PartialEq)]
 pub enum Token {
+	// Keywords
 	Environment,
 	Function,
 	Include,
@@ -12,16 +15,57 @@ pub enum Token {
 	Mac,
 	Pool,
 	Terminator,
-	Identifier(String),
-	String(String),
+	// Simple tokens
 	Semicolon,
 	LeftCurlyBrace,
 	RightCurlyBrace,
+	LeftParenthesis,
+	RightParenthesis,
+	// Complex tokens
+	Identifier(String),
+	String(String),
 	InlineAssembly(String),
+
 	Eof,
 }
 
-pub fn lex(input: &mut Peekable<Chars>) -> Result<Token, String> {
+pub struct Location {
+	file: String,
+	line: u32,
+	column: u32,
+	// For highlighting ranges (an entire token)
+	column_end: Option<u32>,
+}
+
+impl Location {
+	pub fn new(file: &str) -> Location {
+		Location {
+			file: String::from(file),
+			line: 1,
+			column: 1,
+			column_end: None,
+		}
+	}
+}
+
+impl fmt::Display for Location {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(
+			f,
+			"{}:{}:{}{}",
+			self.file,
+			self.line,
+			self.column,
+			if let Some(end) = self.column_end {
+				format!("-{end}")
+			} else {
+				String::from("")
+			}
+		)
+	}
+}
+
+pub fn lex(input: &mut Peekable<Chars>, location: &mut Location) -> Result<Token, String> {
 	// The lexing mode determines what characters are allowed in the current token.
 	// For example, a token beginning with a letter or underscore uses "Identifier" mode,
 	// which forces all following characters to be letters, numbers, or underscores.
@@ -33,6 +77,22 @@ pub fn lex(input: &mut Peekable<Chars>) -> Result<Token, String> {
 	}
 
 	let mut token_string = String::new();
+
+	let mut get_next = |input: &mut Peekable<Chars>| -> Result<char, String> {
+		let next = match input.next() {
+			Some(c) => c,
+			None => return Err(format!("Unterminated token"))
+		};
+
+		if next == '\n' {
+			location.line += 1;
+			location.column = 1;
+		} else {
+			location.column += 1;
+		}
+		Ok(next)
+	};
+
 	let mut mode = Mode::Begin;
 
 	loop {
@@ -51,35 +111,43 @@ pub fn lex(input: &mut Peekable<Chars>) -> Result<Token, String> {
 			Mode::Begin => {
 				match next {
 					' ' | '\t' | '\n' | '\r' => {
-						input.next();
+						get_next(input)?;
 						continue;
 					}
 					'A'..='Z' | 'a'..='z' | '_' => {
 						mode = Mode::Identifier;
 					}
 					'\"' => {
-						input.next();
+						get_next(input)?;
 						mode = Mode::String;
 					}
 					'{' => {
-						input.next();
+						get_next(input)?;
 						return Ok(Token::LeftCurlyBrace);
 					}
 					'}' => {
-						input.next();
+						get_next(input)?;
 						return Ok(Token::RightCurlyBrace);
 					}
+					'(' => {
+						get_next(input)?;
+						return Ok(Token::LeftParenthesis);
+					}
+					')' => {
+						get_next(input)?;
+						return Ok(Token::RightParenthesis);
+					}
 					';' => {
-						input.next();
+						get_next(input)?;
 						return Ok(Token::Semicolon);
 					}
 					'#' => {
-						input.next();
-						let mut matched = input.next() == Some('a');
-						matched &= input.next() == Some('s');
-						matched &= input.next() == Some('m');
-						if !matched {
-							return Err(String::from("Invalid hash character; expected #asm or #end"));
+						get_next(input)?;
+						if get_next(input)? != 'a'
+							|| get_next(input)? != 's'
+							|| get_next(input)? != 'm'
+						{
+							return Err(String::from("Invalid hash character; expected #asm"));
 						}
 						mode = Mode::InlineAssembly
 					}
@@ -88,13 +156,13 @@ pub fn lex(input: &mut Peekable<Chars>) -> Result<Token, String> {
 					}
 				}
 
-				token_string.push(input.next().unwrap());
+				token_string.push(get_next(input)?);
 			}
 
 			Mode::Identifier => {
 				match next {
 					'A'..='Z' | 'a'..='z' | '_' | '0'..='9' => {
-						token_string.push(input.next().unwrap());
+						token_string.push(get_next(input)?);
 					},
 					_ => {
 						// Identifier terminated, check for keywords
@@ -124,17 +192,27 @@ pub fn lex(input: &mut Peekable<Chars>) -> Result<Token, String> {
 			}
 
 			Mode::String => {
-				let next = input.next().unwrap();
+				let next = get_next(input)?;
 
 				if next == '\\' {
-					match match input.next() {
-						Some(character) => character,
-						None => {
+					let escape_chars = HashMap::from([
+						('\\', '\\'),
+						('n', '\n'),
+						('t', '\t'),
+						('r', '\r'),
+						('0', '\0'),
+					]);
+
+					let escaped = match get_next(input) {
+						Ok(character) => character,
+						Err(..) => {
 							return Err(format!("Unterminated string"));
 						}
-					} {
-						'\\' => token_string.push('\\'),
-						_ => return Err(format!("Invalid escape character"))
+					};
+
+					match escape_chars.get(&escaped) {
+						Some(c) => token_string.push(*c),
+						None => return Err(format!("Invalid escape character: {escaped}"))
 					}
 				} else if next == '\"' {
 					return Ok(Token::String(token_string));
@@ -145,31 +223,26 @@ pub fn lex(input: &mut Peekable<Chars>) -> Result<Token, String> {
 
 			Mode::InlineAssembly => {
 				if next == '#' {
-					input.next();
+					get_next(input)?;
 
 					let end_string = ['e', 'n', 'd'];
 
 					for i in 0..3 {
-						match input.next() {
-							Some(c) => {
-								if c != end_string[i] {
-									token_string.push('#');
-									for i in 0..i {
-										token_string.push(end_string[i]);
-									}
-									token_string.push(c);
-									continue;
-								}
+						let c = get_next(input)?;
+
+						if c != end_string[i] {
+							token_string.push('#');
+							for i in 0..i {
+								token_string.push(end_string[i]);
 							}
-							None => {
-								return Err(String::from("Unterminated #asm block."));
-							}
+							token_string.push(c);
+							continue;
 						}
 					}
 
 					return Ok(Token::InlineAssembly(token_string));
 				} else {
-					token_string.push(input.next().unwrap());
+					token_string.push(get_next(input)?);
 				}
 			}
 		}
