@@ -46,6 +46,54 @@ pub struct VariableDeclaration {
 	var_type: String,
 }
 
+fn expect_identifier(input: &mut Peekable<Chars>, loc: &mut Location) -> Result<String, String> {
+	let token = lex(input, loc)?;
+
+	match token {
+		Token::Identifier(name) => Ok(name),
+		_ => Err(format!("Expected Identifier, got {token:?}"))
+	}
+}
+
+fn expect_string(input: &mut Peekable<Chars>, loc: &mut Location) -> Result<String, String> {
+	let token = lex(input, loc)?;
+
+	match token {
+		Token::String(string) => Ok(string),
+		_ => Err(format!("Expected String, got {token:?}"))
+	}
+}
+
+fn expect_lparen(input: &mut Peekable<Chars>, loc: &mut Location) -> Result<(), String> {
+	let token = lex(input, loc)?;
+
+	if token != Token::LeftParenthesis {
+		Err(format!("Expected (, got {token:?}"))
+	} else {
+		Ok(())
+	}
+}
+
+fn expect_lbrace(input: &mut Peekable<Chars>, loc: &mut Location) -> Result<(), String> {
+	let token = lex(input, loc)?;
+
+	if token != Token::LeftCurlyBrace {
+		Err(format!("Expected {{, got {token:?}"))
+	} else {
+		Ok(())
+	}
+}
+
+fn expect_semicolon(input: &mut Peekable<Chars>, loc: &mut Location) -> Result<(), String> {
+	let token = lex(input, loc)?;
+
+	if token != Token::Semicolon {
+		Err(format!("Expected ;, got {token:?}"))
+	} else {
+		Ok(())
+	}
+}
+
 fn parse_environment(input: &mut Peekable<Chars>, loc: &mut Location) -> Result<Vec<Statement>, String> {
 	let mut ast = Vec::<Statement>::new();
 
@@ -54,29 +102,13 @@ fn parse_environment(input: &mut Peekable<Chars>, loc: &mut Location) -> Result<
 
 		match root {
 			Token::Use => {
-				let environment = lex(input, loc)?;
-
-				match environment {
-					Token::Identifier(name) => ast.push(Statement::Use(name)),
-					_ => return Err(format!("Unexpected {environment:?} after `use`"))
-				}
-
-				if lex(input, loc)? != Token::Semicolon {
-					return Err(String::from("Expected ; after `use` statement"));
-				}
+				ast.push(Statement::Use(expect_identifier(input, loc)?));
+				expect_semicolon(input, loc)?;
 			}
 
 			Token::Def => {
-				let identifier = lex(input, loc)?;
-
-				let name = match identifier {
-					Token::Identifier(identifier) => identifier,
-					_ => return Err(format!("Unexpected {identifier:?} after `def`"))
-				};
-
-				if lex(input, loc)? != Token::LeftParenthesis {
-					return Err(String::from("Expected argument list for bytecode definition"));
-				}
+				let name = expect_identifier(input, loc)?;
+				expect_lparen(input, loc)?;
 
 				let mut args = Vec::<String>::new();
 
@@ -90,11 +122,9 @@ fn parse_environment(input: &mut Peekable<Chars>, loc: &mut Location) -> Result<
 					}
 				}
 
-				ast.push(Statement::Def(Def { name, args }));
+				expect_semicolon(input, loc)?;
 
-				if lex(input, loc)? != Token::Semicolon {
-					return Err(String::from("Expected ; after `def` statement"));
-				}
+				ast.push(Statement::Def(Def { name, args }));
 			}
 
 			Token::RightCurlyBrace => break,
@@ -127,15 +157,8 @@ fn parse_root(input: &mut Peekable<Chars>, loc: &mut Location) -> Result<Vec<Sta
 		let root = lex(input, loc)?;
 		match root {
 			Token::Environment => {
-				let name = lex(input, loc)?;
-				let name = match name {
-					Token::Identifier(name) => name,
-					_ => return Err(format!("Unexpected {name:?} after `env`."))
-				};
-
-				if lex(input, loc)? != Token::LeftCurlyBrace {
-					return Err(String::from("Expected { after environment name."));
-				}
+				let name = expect_identifier(input, loc)?;
+				expect_lbrace(input, loc)?;
 
 				ast.push(Statement::Environment(Environment {
 					name,
@@ -146,35 +169,22 @@ fn parse_root(input: &mut Peekable<Chars>, loc: &mut Location) -> Result<Vec<Sta
 			Token::Include => {
 				let include_token = lex(input, loc)?;
 				match include_token {
+					Token::String(path) => todo!(),
 					Token::Asm => {
-						let path = lex(input, loc)?;
-						match path {
-							Token::String(string) => {
-								ast.push(Statement::InlineAssembly(format!("include \"{string}\"")));
-							}
-							_ => {
-								return Err(format!("Expected string after `include asm`, got {path:?}"));
-							}
-						}
+						ast.push(Statement::InlineAssembly(format!(
+							"include \"{}\"",
+							expect_string(input, loc)?
+						)));
 					}
-					_ => {
-						return Err(format!("Expected `asm` after `include`, got {include_token:?}"));
-					}
+					_ => return Err(format!("Expected `asm` after `include`, got {include_token:?}"))
 				}
 			}
 
 			Token::Identifier(identifier) => {
 				match lex(input, loc)? {
 					Token::Function => {
-						let name = lex(input, loc)?;
-						let name = match name {
-							Token::Identifier(name) => name,
-							_ => return Err(format!("Unexpected {name:?} after `fn`."))
-						};
-
-						if lex(input, loc)? != Token::LeftCurlyBrace {
-							return Err(String::from("Expected { after function name."));
-						}
+						let name = expect_identifier(input, loc)?;
+						expect_lbrace(input, loc)?;
 
 						ast.push(Statement::Function(Function {
 							name,
