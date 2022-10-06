@@ -3,27 +3,31 @@ use std::fs::read_to_string;
 use std::process::exit;
 
 fn main() {
-	let path = &args().collect::<Vec<String>>()[1];
+	let mut args = args();
+	args.next();
 
-	let input = &match read_to_string(path) {
-		Ok(input) => input,
-		Err(err) => {
-			eprintln!("{path}: {err}");
-			exit(1);
-		}
-	};
+	for path in args {
+		let input = &match read_to_string(&path) {
+			Ok(input) => input,
+			Err(err) => {
+				eprintln!("{path}: {err}");
+				exit(1);
+			}
+		};
 
-	match evscript::parse(input) {
-		Ok(ast) => println!("{ast:?}"),
-		Err(err) => {
-			eprintln!("{path}: {err}");
-			exit(1);
+		match evscript::parse(input) {
+			Ok(ast) => println!("{ast:?}\n"),
+			Err(err) => {
+				eprintln!("{path}: {err}");
+				exit(1);
+			}
 		}
 	}
 }
 
 mod tests {
-	#[cfg(test)]
+	#![cfg(test)]
+
 	use evscript::types::*;
 	use std::fs::read_to_string;
 
@@ -33,9 +37,8 @@ mod tests {
 			Err(err) => panic!("{path}: {err}"),
 		};
 
-		match evscript::parse(input) {
-			Ok(ast) => println!("{ast:?}"),
-			Err(err) => panic!("{path}: {err}"),
+		if let Err(err) = evscript::parse(input) {
+			panic!("{path}: {err}");
 		}
 	}
 
