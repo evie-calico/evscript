@@ -1,0 +1,30 @@
+#asm include "script.inc" #end
+
+env script {
+	use std;
+	def memset(ptr, u8, u16);
+	def rand(u8);
+	def print(ptr);
+	def say(ptr);
+	def print_wait();
+	def get_flag(u8, u8);
+	def map_put_tile(u8, u8, u8);
+	def map_get_tile(u8, u8, u8);
+	def step_direction(u8, u8, u8);
+	def draw_sprite(u8);
+	def npc_move(u8, u16, u16);
+	def npc_set_frame(u8, u8);
+	def npc_lock();
+
+	pool = 16;
+	terminator = return;
+}
+
+env npc {
+	use script;
+	macro move(...) = npc_move;
+	macro set_frame(...) = npc_set_frame;
+	alias lock() = npc_lock();
+	alias wait() = print_wait();
+	pool = 8;
+}

@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use crate::parser::*;
+use crate::types::*;
 use lalrpop_util::ParseError;
 
 grammar;
@@ -13,8 +13,7 @@ match {
 	"(", ")", "{", "}",
 	r"[a-zA-Z_][a-zA-Z0-9_]*",
 	r#""([^"]|\.)*""#,
-	r"[0-9]+",
-	r"-[0-9]+",
+	r"-?[0-9]+",
 	";", ",",
 	"fn", "env", "use", "include", "def", "alias", "macro", "pool", "terminator",
 	"return", "yield",
@@ -167,13 +166,9 @@ Term: Rpn = {
 };
 
 Num: Rpn = {
-	r"[0-9]+" =>? Ok(Rpn::Unsigned(u64::from_str(<>)
+	r"-?[0-9]+" =>? Ok(Rpn::Signed(i64::from_str(<>)
 		.map_err(|_| ParseError::User {
-			error: "Unsigned number is too large (maximum of 64 bits)"
-		})?)),
-	r"-[0-9]+" =>? Ok(Rpn::Signed(i64::from_str(<>)
-		.map_err(|_| ParseError::User {
-			error: "Signed number is too large (maximum of 64 bits)"
+			error: "Integer is too large (maximum of 64 bits, signed)"
 		})?)),
 };
 

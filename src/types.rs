@@ -73,7 +73,6 @@ pub struct Alias {
 pub enum Rpn {
 	// Values
 	Variable(String),
-	Unsigned(u64),
 	Signed(i64),
 	String(String),
 	Call(String, Vec<Rpn>),
@@ -108,4 +107,41 @@ pub enum Rpn {
 	LogicalOr(Box<Rpn>, Box<Rpn>),
 	// += is constructed using a Set(self, Add(self, <expression>))
 	Set(String, Box<Rpn>),
+}
+
+impl Rpn {
+	pub fn eval_const(&self) -> Result<i64, String> {
+		Ok(match self {
+			Rpn::Variable(..) => return Err(format!("Unexpected variable, expression must be constant")),
+			Rpn::String(..) => return Err(format!("Unexpected string, expression must be constant")),
+			Rpn::Call(..) => return Err(format!("Unexpected call, expression must be constant")),
+			Rpn::Deref(..) => return Err(format!("Unexpected dereference, expression must be constant")),
+			Rpn::Address(..) => return Err(format!("Unexpected address operator, expression must be constant")),
+			Rpn::Set(..) => return Err(format!("Unexpected assignment, expression must be constant")),
+
+			Rpn::Signed(value) => *value,
+
+			Rpn::Negate(i) => i.eval_const()?,
+			Rpn::Not(i) => i.eval_const()?,
+
+			Rpn::Mul(l, r) => l.eval_const()? * r.eval_const()?,
+			Rpn::Div(l, r) => l.eval_const()? / r.eval_const()?,
+			Rpn::Mod(l, r) => l.eval_const()? % r.eval_const()?,
+			Rpn::Add(l, r) => l.eval_const()? + r.eval_const()?,
+			Rpn::Sub(l, r) => l.eval_const()? - r.eval_const()?,
+			Rpn::ShiftLeft(l, r) => l.eval_const()? << r.eval_const()?,
+			Rpn::ShiftRight(l, r) => l.eval_const()? >> r.eval_const()?,
+			Rpn::BinaryAnd(l, r) => l.eval_const()? & r.eval_const()?,
+			Rpn::BinaryXor(l, r) => l.eval_const()? ^ r.eval_const()?,
+			Rpn::BinaryOr(l, r) => l.eval_const()? | r.eval_const()?,
+			Rpn::Equ(l, r) => (l.eval_const()? == r.eval_const()?) as i64,
+			Rpn::NotEqu(l, r) => (l.eval_const()? != r.eval_const()?) as i64,
+			Rpn::LessThan(l, r) => (l.eval_const()? < r.eval_const()?) as i64,
+			Rpn::GreaterThan(l, r) => (l.eval_const()? > r.eval_const()?) as i64,
+			Rpn::LessThanEqu(l, r) => (l.eval_const()? <= r.eval_const()?) as i64,
+			Rpn::GreaterThanEqu(l, r) => (l.eval_const()? >= r.eval_const()?) as i64,
+			Rpn::LogicalAnd(l, r) => (l.eval_const()? != 0 && r.eval_const()? != 0) as i64,
+			Rpn::LogicalOr(l, r) => (l.eval_const()? != 0 || r.eval_const()? != 0) as i64,
+		})
+	}
 }
