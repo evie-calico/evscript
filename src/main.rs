@@ -1,4 +1,5 @@
 use std::env::args;
+use std::fs::File;
 use std::fs::read_to_string;
 use std::process::exit;
 
@@ -26,7 +27,15 @@ fn main() {
 			}
 		};
 
-		if let Err(err) = evscript::compiler::compile(ast) {
+		let output = match File::create("out.asm") {
+			Ok(f) => f,
+			Err(err) => {
+				eprintln!("Failed to open out.asm: {err}");
+				exit(1);
+			}
+		};
+
+		if let Err(err) = evscript::compiler::compile(ast, output) {
 			eprintln!("{path}: {err}");
 			exit(1);
 		}

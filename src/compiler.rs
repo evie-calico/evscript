@@ -1,6 +1,8 @@
 use crate::types;
+use crate::types::Rpn;
 
 use std::collections::HashMap;
+use std::io::Write;
 
 #[derive(Debug)]
 struct Environment {
@@ -24,7 +26,22 @@ impl Environment {
 	}
 }
 
-fn compile_environment(name: &str, env: types::Environment, environment_table: &HashMap<String, Environment>) -> Result<Environment, String> {
+struct Function {
+	env: String,
+	args: Vec<String>,
+}
+
+struct Variable {
+	name: String,
+	index: u8,
+	size: u8,
+}
+
+fn compile_environment(
+	name: &str,
+	env: types::Environment,
+	environment_table: &HashMap<String, Environment>
+) -> Result<Environment, String> {
 	let mut compiled_env = Environment {
 		definitions: HashMap::<String, types::Definition>::new(),
 		pool: 0,
@@ -95,7 +112,106 @@ fn compile_environment(name: &str, env: types::Environment, environment_table: &
 	Ok(compiled_env)
 }
 
-pub fn compile(ast: Vec<types::Root>) -> Result<(), String> {
+/// Compiles an Rpn tree, returning a variable containing the final result.
+fn compile_expression<W: Write>(
+	rpn: Rpn,
+	variable_table: &[Option<Variable>; 256],
+	function_table: &HashMap<String, Function>,
+	output: &mut W
+) -> Result<String, String> {
+	match rpn {
+		Rpn::Variable(..) => todo!(),
+		Rpn::Signed(..) => todo!(),
+		Rpn::String(..) => todo!(),
+		Rpn::Call(..) => todo!(),
+		Rpn::Negate(..) => todo!(),
+		Rpn::Deref(..) => todo!(),
+		Rpn::Not(..) => todo!(),
+		Rpn::Address(..) => todo!(),
+		Rpn::Mul(..) => todo!(),
+		Rpn::Div(..) => todo!(),
+		Rpn::Mod(..) => todo!(),
+		Rpn::Add(..) => todo!(),
+		Rpn::Sub(..) => todo!(),
+		Rpn::ShiftLeft(..) => todo!(),
+		Rpn::ShiftRight(..) => todo!(),
+		Rpn::BinaryAnd(..) => todo!(),
+		Rpn::BinaryXor(..) => todo!(),
+		Rpn::BinaryOr(..) => todo!(),
+		Rpn::Equ(..) => todo!(),
+		Rpn::NotEqu(..) => todo!(),
+		Rpn::LessThan(..) => todo!(),
+		Rpn::GreaterThan(..) => todo!(),
+		Rpn::LessThanEqu(..) => todo!(),
+		Rpn::GreaterThanEqu(..) => todo!(),
+		Rpn::LogicalAnd(..) => todo!(),
+		Rpn::LogicalOr(..) => todo!(),
+		Rpn::Set(..) => todo!(),
+	}
+}
+
+fn compile_statement<W: Write>(
+	statement: types::Statement,
+	variable_table: &[Option<Variable>; 256],
+	function_table: &HashMap<String, Function>,
+	output: &mut W
+) -> Result<(), String> {
+	match statement {
+		types::Statement::Expression(..) => todo!(),
+		types::Statement::Declaration(..) => todo!(),
+		types::Statement::DeclareAssign(..) => todo!(),
+		types::Statement::If(..) => todo!(),
+		types::Statement::While(..) => todo!(),
+		types::Statement::Do(..) => todo!(),
+		types::Statement::For(..) => todo!(),
+		types::Statement::Repeat(..) => todo!(),
+		types::Statement::Loop(..) => todo!(),
+		_ => return Err(format!("{statement:?} not allowed in function")),
+	}
+}
+
+fn compile_function<W: Write>(
+	name: &str,
+	func: types::Function,
+	function_table: &HashMap<String, Function>,
+	environment_table: &HashMap<String, Environment>,
+	output: &mut W
+) -> Result<Function, String> {
+	let compiled_function = Function {
+		env: func.environment,
+		args: vec![],
+	};
+
+	let variable_table: [Option<Variable>; 256] = [
+		None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+		None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+		None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+		None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+		None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+		None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+		None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+		None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+		None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+		None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+		None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+		None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+		None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+		None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+		None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+		None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+	];
+
+	writeln!(output, "{name}::").map_err(|err| err.to_string())?;
+
+	for i in func.contents {
+		compile_statement(i, &variable_table, &function_table, output)?;
+	}
+
+	Ok(compiled_function)
+}
+
+pub fn compile<W: Write>(ast: Vec<types::Root>, mut output: W) -> Result<(), String> {
+	let mut function_table = HashMap::<String, Function>::new();
 	let mut environment_table = HashMap::<String, Environment>::from([
 		(String::from("std"), Environment::std()),
 	]);
@@ -106,7 +222,10 @@ pub fn compile(ast: Vec<types::Root>) -> Result<(), String> {
 				let new_env = compile_environment(&name, env, &environment_table)?;
 				environment_table.insert(name, new_env);
 			}
-			types::Root::Function(name, func) => todo!(),
+			types::Root::Function(name, func) => {
+				let new_func = compile_function(&name, func, &function_table, &environment_table, &mut output)?;
+				function_table.insert(name, new_func);
+			}
 			types::Root::Assembly(contents) => todo!(),
 			types::Root::Include(path) => todo!(),
 		}

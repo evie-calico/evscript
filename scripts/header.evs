@@ -28,3 +28,7 @@ env npc {
 	alias wait() = print_wait();
 	pool = 8;
 }
+
+script fn Main() {
+
+}
