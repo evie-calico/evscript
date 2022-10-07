@@ -1,7 +1,7 @@
-use std::str::FromStr;
-
 use crate::types::*;
 use lalrpop_util::ParseError;
+
+use std::str::FromStr;
 
 grammar;
 
@@ -30,10 +30,10 @@ pub File = { <Root*> }
 
 Root: Root = {
 	<environment:Iden> "fn" <name:Iden> "(" <args:Comma<Iden>> ")" "{" <contents:Statement*> "}" => {
-		Root::Function( Function { name, environment, args, contents } )
+		Root::Function( name, Function { environment, args, contents } )
 	},
 	"env" <name:Iden> "{" <contents:Statement*> "}" => {
-		Root::Environment( Environment { name, contents } )
+		Root::Environment( name, Environment { contents } )
 	},
 	r"#asm[^#]*#end" => Root::Assembly(String::from(<>)),
 	"include" <path:String> ";" => Root::Include(path),
@@ -41,16 +41,16 @@ Root: Root = {
 
 Statement: Statement = {
 	"def" <name:Iden> "(" <args:Comma<Iden>> ")" ";" => {
-		Statement::Def(Def { name, args })
+		Statement::Definition(name, Definition::Def(Def { args, bytecode: 0 }))
 	},
 	"alias" <name:Iden> "(" <args:Comma<Iden>> ")" "=" <target:Iden> "(" <target_args:Comma<Iden>> ")" ";" => {
-		Statement::Alias(Alias { name, args, target, target_args })
+		Statement::Definition(name, Definition::Alias(Alias { args, target, target_args }))
 	},
 	"macro" <name:Iden> "(" <args:Comma<Iden>> ")" "=" <target:Iden> ";" => {
-		Statement::Macro(Macro { name, args, target, varargs: false })
+		Statement::Definition(name, Definition::Macro(Macro { args, target, varargs: false }))
 	},
 	"macro" <name:Iden> "(" <args:Comma<Iden>> "..." ")" "=" <target:Iden> ";" => {
-		Statement::Macro(Macro { name, args, target, varargs: true })
+		Statement::Definition(name, Definition::Macro(Macro { args, target, varargs: true }))
 	},
 	"use" <env:Iden> ";" => Statement::Use(env),
 	"pool" "=" <expr:Expr> ";" => Statement::Pool(expr),

@@ -6,9 +6,7 @@ use std::vec::Vec;
 pub enum Statement {
 	// Environment statements
 	Use(String),
-	Def(Def),
-	Alias(Alias),
-	Macro(Macro),
+	Definition(String, Definition),
 	Pool(Rpn),
 	Terminator(String),
 	// Function statements
@@ -25,8 +23,8 @@ pub enum Statement {
 
 #[derive(Debug)]
 pub enum Root {
-	Environment(Environment),
-	Function(Function),
+	Environment(String, Environment),
+	Function(String, Function),
 	Assembly(String),
 	Include(String),
 }
@@ -34,36 +32,40 @@ pub enum Root {
 // Top-level statements.
 #[derive(Debug)]
 pub struct Environment {
-	pub name: String,
 	pub contents: Vec<Statement>
 }
 
 #[derive(Debug)]
 pub struct Function {
-	pub name: String,
 	pub environment: String,
 	pub args: Vec<String>,
 	pub contents: Vec<Statement>
 }
 
 // Environment statements
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+pub enum Definition {
+	Def(Def),
+	Alias(Alias),
+	Macro(Macro),
+}
+
+#[derive(Debug, Clone)]
 pub struct Def {
-	pub name: String,
+	/// The lookup value of this definition.
+	pub bytecode: u8,
 	pub args: Vec<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Macro {
-	pub name: String,
 	pub args: Vec<String>,
 	pub target: String,
 	pub varargs: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Alias {
-	pub name: String,
 	pub args: Vec<String>,
 	pub target: String,
 	pub target_args: Vec<String>,

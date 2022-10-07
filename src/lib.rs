@@ -1,4 +1,5 @@
 pub mod types;
+pub mod compiler;
 
 use lalrpop_util::lalrpop_mod;
 lalrpop_mod!(pub parser);

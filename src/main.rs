@@ -15,12 +15,20 @@ fn main() {
 			}
 		};
 
-		match evscript::parse(input) {
-			Ok(ast) => println!("{ast:?}\n"),
+		let ast = match evscript::parse(input) {
+			Ok(ast) => {
+				println!("{ast:?}\n");
+				ast
+			}
 			Err(err) => {
 				eprintln!("{path}: {err}");
 				exit(1);
 			}
+		};
+
+		if let Err(err) = evscript::compiler::compile(ast) {
+			eprintln!("{path}: {err}");
+			exit(1);
 		}
 	}
 }

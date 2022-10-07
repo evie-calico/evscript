@@ -1,4 +1,4 @@
-#asm include "script.inc" #end
+//#asm include "script.inc" #end
 
 env script {
 	use std;
