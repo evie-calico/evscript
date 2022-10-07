@@ -32,9 +32,69 @@ struct Function {
 }
 
 struct Variable {
-	name: String,
+	name: Option<String>,
 	index: u8,
 	size: u8,
+}
+
+struct VariableTable {
+	variables: [Option<Variable>; 256]
+}
+
+impl VariableTable {
+	fn new() -> VariableTable {
+		VariableTable { variables: [
+			None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+			None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+			None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+			None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+			None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+			None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+			None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+			None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+			None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+			None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+			None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+			None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+			None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+			None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+			None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+			None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+		]}
+	}
+
+	fn alloc(&mut self, size: u8) -> Result<u8, String> {
+		for mut i in 0..256 {
+			match &self.variables[i] {
+				Some(var) => i += var.size as usize,
+				None => {
+					let mut new_var = Variable {
+						name: None,
+						index: i as u8,
+						size,
+					};
+					self.variables[i] = Some(new_var);
+					return Ok(i as u8);
+				}
+			}
+		}
+
+		Err(String::from("Out of variable space; a single function is limited to 256 bytes"))
+	}
+
+	fn name_of(&mut self, i: u8) -> &Option<String> {
+		match &self.variables[i as usize] {
+			Some(var) => &var.name,
+			None => panic!("Variable index {i} does not exist"),
+		}
+	}
+
+	fn size_of(&mut self, i: u8) -> u8 {
+		match &self.variables[i as usize] {
+			Some(var) => var.size,
+			None => panic!("Variable index {i} does not exist"),
+		}
+	}
 }
 
 fn compile_environment(
@@ -115,16 +175,34 @@ fn compile_environment(
 /// Compiles an Rpn tree, returning a variable containing the final result.
 fn compile_expression<W: Write>(
 	rpn: Rpn,
-	variable_table: &[Option<Variable>; 256],
+	variable_table: & mut VariableTable,
 	function_table: &HashMap<String, Function>,
 	output: &mut W
-) -> Result<String, String> {
+) -> Result<u8, String> {
 	match rpn {
 		Rpn::Variable(..) => todo!(),
-		Rpn::Signed(..) => todo!(),
+		Rpn::Signed(value) => {
+			// The "default" type of an integer is i8 (think C's int)
+			// This is because most projects will probably only have the 8-bit bytecode installed.
+			// TODO: make the default integer type configurable per-environment
+			let container = variable_table.alloc(1)?;
+			// put (container), value
+			writeln!(output, "\tstd@put_u8, {container}, {value}").map_err(|err| err.to_string())?;
+			Ok(container)
+		}
 		Rpn::String(..) => todo!(),
 		Rpn::Call(..) => todo!(),
-		Rpn::Negate(..) => todo!(),
+		Rpn::Negate(sub_rpn) => {
+			let operand = compile_expression(*sub_rpn, variable_table, function_table, output)?;
+			let operand_size = variable_table.size_of(operand);
+			let zero = variable_table.alloc(operand_size)?;
+			// TODO: make opcodes consider operand size.
+			// put (zero), 0
+			writeln!(output, "\tstd@put_u8, {zero}, 0").map_err(|err| err.to_string())?;
+			// (operand) = (zero) - (operand)
+			writeln!(output, "\tstd@sub_u8, {operand}, {zero}, {operand}").map_err(|err| err.to_string())?;
+			Ok(operand)
+		}
 		Rpn::Deref(..) => todo!(),
 		Rpn::Not(..) => todo!(),
 		Rpn::Address(..) => todo!(),
@@ -152,12 +230,12 @@ fn compile_expression<W: Write>(
 
 fn compile_statement<W: Write>(
 	statement: types::Statement,
-	variable_table: &[Option<Variable>; 256],
+	variable_table: &mut VariableTable,
 	function_table: &HashMap<String, Function>,
 	output: &mut W
 ) -> Result<(), String> {
 	match statement {
-		types::Statement::Expression(..) => todo!(),
+		types::Statement::Expression(rpn) => compile_expression(rpn, variable_table, function_table, output)?,
 		types::Statement::Declaration(..) => todo!(),
 		types::Statement::DeclareAssign(..) => todo!(),
 		types::Statement::If(..) => todo!(),
@@ -167,7 +245,9 @@ fn compile_statement<W: Write>(
 		types::Statement::Repeat(..) => todo!(),
 		types::Statement::Loop(..) => todo!(),
 		_ => return Err(format!("{statement:?} not allowed in function")),
-	}
+	};
+
+	Ok(())
 }
 
 fn compile_function<W: Write>(
@@ -182,29 +262,12 @@ fn compile_function<W: Write>(
 		args: vec![],
 	};
 
-	let variable_table: [Option<Variable>; 256] = [
-		None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-		None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-		None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-		None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-		None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-		None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-		None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-		None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-		None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-		None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-		None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-		None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-		None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-		None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-		None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-		None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-	];
+	let mut variable_table = VariableTable::new();
 
-	writeln!(output, "{name}::").map_err(|err| err.to_string())?;
+	writeln!(output, "section \"{name} evscript fn\", romx\n{name}::").map_err(|err| err.to_string())?;
 
 	for i in func.contents {
-		compile_statement(i, &variable_table, &function_table, output)?;
+		compile_statement(i, &mut variable_table, &function_table, output)?;
 	}
 
 	Ok(compiled_function)

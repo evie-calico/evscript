@@ -27,7 +27,7 @@ fn main() {
 			}
 		};
 
-		let output = match File::create("out.asm") {
+		let output = match File::create("target/out.asm") {
 			Ok(f) => f,
 			Err(err) => {
 				eprintln!("Failed to open out.asm: {err}");
