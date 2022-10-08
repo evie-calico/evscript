@@ -59,7 +59,7 @@ Statement: Statement = {
 
 	<expr:Expr> ";" => Statement::Expression(expr),
 	<t:Iden> <i:Iden> ";" => Statement::Declaration(t, i),
-	<t:Iden> <a:Assignment> => Statement::DeclareAssign(t, Box::new(a)),
+	<t:Iden> <l:Iden> "=" <r:Expr> ";" => Statement::DeclareAssign(t, l.clone(), Rpn::Set(l, Box::new(r))),
 	Assignment,
 	IfContainer,
 	"while" <cond:Expr> "{" <contents:Statement*> "}" => Statement::While(cond, contents),
@@ -151,7 +151,13 @@ Factor: Rpn = {
 
 Unary: Rpn = {
 	"-" <l:Term> => Rpn::Negate(Box::new(l)),
-	"!" <l:Term> => Rpn::Not(Box::new(l)),
+	"!" <l:Term> => {
+		// TODO: Evalutate constant expressions like this for all operators.
+		if let Rpn::Signed(i) = l {
+			return Rpn::Signed(!i)
+		}
+		Rpn::Not(Box::new(l))
+	},
 	"*" <l:Term> => Rpn::Deref(Box::new(l)),
 	"&" <l:Iden> => Rpn::Address(l),
 	Term,

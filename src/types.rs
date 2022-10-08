@@ -12,7 +12,7 @@ pub enum Statement {
 	// Function statements
 	Expression(Rpn),
 	Declaration(String, String),
-	DeclareAssign(String, Box<Statement>),
+	DeclareAssign(String, String, Rpn),
 	If(Rpn, Vec<Statement>, Option<Vec<Statement>>),
 	While(Rpn, Vec<Statement>),
 	Do(Rpn, Vec<Statement>),

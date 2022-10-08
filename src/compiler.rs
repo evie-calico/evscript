@@ -82,9 +82,24 @@ impl VariableTable {
 		Err(String::from("Out of variable space; a single function is limited to 256 bytes"))
 	}
 
-	fn name_of(&mut self, i: u8) -> &Option<String> {
-		match &self.variables[i as usize] {
-			Some(var) => &var.name,
+	fn lookup(&self, name: &str) -> Result<u8, String> {
+		for mut i in 0..256 {
+			if let Some(variable) = &self.variables[i] {
+				if let Some(variable_name) = &variable.name {
+					if variable_name == name {
+						return Ok(i as u8);
+					}
+				}
+				i += variable.size as usize;
+			}
+		}
+
+		Err(format!("Variable {name} does not exist"))
+	}
+
+	fn name_of(&mut self, i: u8) -> &mut Option<String> {
+		match &mut self.variables[i as usize] {
+			Some(var) => &mut var.name,
 			None => panic!("Variable index {i} does not exist"),
 		}
 	}
@@ -202,7 +217,7 @@ fn compile_expression<W: Write>(
 	}
 
 	match rpn {
-		Rpn::Variable(..) => todo!(),
+		Rpn::Variable(name) => vtable.lookup(&name),
 		Rpn::Signed(value) => {
 			// The "default" type of an integer is i8 (think C's int)
 			// This is because most projects will probably only have the 8-bit bytecode installed.
@@ -220,14 +235,21 @@ fn compile_expression<W: Write>(
 			let zero = vtable.alloc(operand_size)?;
 			let result = vtable.alloc(operand_size)?;
 			// TODO: make opcodes consider operand size.
-			// put (zero), 0
 			writeln!(output, "\tstd@put_u8 {zero}, 0").map_err(|err| err.to_string())?;
-			// (result) = (zero) - (operand)
 			writeln!(output, "\tstd@sub_u8 {result}, {zero}, {operand}").map_err(|err| err.to_string())?;
 			Ok(result)
 		}
+		Rpn::Not(i) => {
+			let operand = compile_expression(*i, vtable, ftable, output)?;
+			let operand_size = vtable.size_of(operand);
+			// TODO: make the default integer type configurable per-environment
+			let ff = vtable.alloc(operand_size)?;
+			let result = vtable.alloc(operand_size)?;
+			writeln!(output, "\tstd@put_u8 {ff}, $FF").map_err(|err| err.to_string())?;
+			writeln!(output, "\tstd@xor_u8 {result}, {operand}, {ff}").map_err(|err| err.to_string())?;
+			Ok(result)
+		}
 		Rpn::Deref(..) => todo!(),
-		Rpn::Not(..) => todo!(),
 		Rpn::Address(..) => todo!(),
 		Rpn::Mul(l, r) => binary_operation(l, "mul", r, vtable, ftable, output),
 		Rpn::Div(l, r) => binary_operation(l, "div", r, vtable, ftable, output),
@@ -247,20 +269,41 @@ fn compile_expression<W: Write>(
 		Rpn::GreaterThanEqu(l, r) => binary_operation(l, "gte", r, vtable, ftable, output),
 		Rpn::LogicalAnd(l, r) => binary_operation(l, "land", r, vtable, ftable, output),
 		Rpn::LogicalOr(l, r) => binary_operation(l, "lor", r, vtable, ftable, output),
-		Rpn::Set(..) => todo!(),
+		Rpn::Set(name, i) => {
+			// A plain Set may only assign to existing variables.
+			let dest = vtable.lookup(&name)?;
+			// TODO: make this directly take ownership of i if it is not an Rpn::Variable.
+			let source = compile_expression(*i, vtable, ftable, output)?;
+			writeln!(output, "\tstd@mov_u8 {dest}, {source}").map_err(|err| err.to_string())?;
+			Ok(dest)
+		}
 	}
 }
 
 fn compile_statement<W: Write>(
 	statement: types::Statement,
-	variable_table: &mut VariableTable,
-	function_table: &HashMap<String, Function>,
+	vtable: &mut VariableTable,
+	ftable: &HashMap<String, Function>,
 	output: &mut W
 ) -> Result<(), String> {
 	match statement {
-		types::Statement::Expression(rpn) => compile_expression(rpn, variable_table, function_table, output)?,
-		types::Statement::Declaration(..) => todo!(),
-		types::Statement::DeclareAssign(..) => todo!(),
+		types::Statement::Expression(rpn) => {
+			compile_expression(rpn, vtable, ftable, output)?;
+		}
+		types::Statement::Declaration(t, name) => {
+			eprintln!("WARN: type currently defaults to u8");
+			let new_var = vtable.alloc(1)?;
+			*vtable.name_of(new_var) = Some(name);
+		}
+		types::Statement::DeclareAssign(t, name, rpn) => {
+			eprintln!("WARN: type currently defaults to u8");
+
+			// Create a new variable
+			let new_var = vtable.alloc(1)?;
+			*vtable.name_of(new_var) = Some(name.clone());
+			// Compile the Set.
+			compile_expression(rpn, vtable, ftable, output)?;
+		},
 		types::Statement::If(..) => todo!(),
 		types::Statement::While(..) => todo!(),
 		types::Statement::Do(..) => todo!(),
@@ -276,28 +319,35 @@ fn compile_statement<W: Write>(
 fn compile_function<W: Write>(
 	name: &str,
 	func: types::Function,
-	function_table: &HashMap<String, Function>,
+	ftable: &HashMap<String, Function>,
 	environment_table: &HashMap<String, Environment>,
 	output: &mut W
 ) -> Result<Function, String> {
+	let env = match environment_table.get(&func.environment) {
+		Some(env) => env,
+		None => return Err(format!("Environment {} does not exist", func.environment)),
+	};
 	let compiled_function = Function {
 		env: func.environment,
 		args: vec![],
 	};
-
-	let mut variable_table = VariableTable::new();
+	let mut vtable = VariableTable::new();
 
 	writeln!(output, "section \"{name} evscript fn\", romx\n{name}::").map_err(|err| err.to_string())?;
 
 	for i in func.contents {
-		compile_statement(i, &mut variable_table, &function_table, output)?;
+		compile_statement(i, &mut vtable, &ftable, output)?;
+	}
+
+	if let Some(terminator) = env.terminator {
+		writeln!(output, "\tdb {terminator}").map_err(|err| err.to_string())?;
 	}
 
 	Ok(compiled_function)
 }
 
 pub fn compile<W: Write>(ast: Vec<types::Root>, mut output: W) -> Result<(), String> {
-	let mut function_table = HashMap::<String, Function>::new();
+	let mut ftable = HashMap::<String, Function>::new();
 	let mut environment_table = HashMap::<String, Environment>::from([
 		(String::from("std"), Environment::std()),
 	]);
@@ -309,15 +359,13 @@ pub fn compile<W: Write>(ast: Vec<types::Root>, mut output: W) -> Result<(), Str
 				environment_table.insert(name, new_env);
 			}
 			types::Root::Function(name, func) => {
-				let new_func = compile_function(&name, func, &function_table, &environment_table, &mut output)?;
-				function_table.insert(name, new_func);
+				let new_func = compile_function(&name, func, &ftable, &environment_table, &mut output)?;
+				ftable.insert(name, new_func);
 			}
 			types::Root::Assembly(contents) => todo!(),
 			types::Root::Include(path) => todo!(),
 		}
 	}
-
-	println!("{environment_table:#?}");
 
 	Ok(())
 }
