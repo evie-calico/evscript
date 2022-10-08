@@ -30,5 +30,5 @@ env npc {
 }
 
 script fn Main() {
-	-(6);
+	-(6 * 7 + 5 / 6);
 }

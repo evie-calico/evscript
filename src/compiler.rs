@@ -175,55 +175,78 @@ fn compile_environment(
 /// Compiles an Rpn tree, returning a variable containing the final result.
 fn compile_expression<W: Write>(
 	rpn: Rpn,
-	variable_table: & mut VariableTable,
-	function_table: &HashMap<String, Function>,
+	vtable: & mut VariableTable,
+	ftable: &HashMap<String, Function>,
 	output: &mut W
 ) -> Result<u8, String> {
+	fn binary_operation<W: Write>(
+		l: Box<Rpn>,
+		op: &str,
+		r: Box<Rpn>,
+		vtable: & mut VariableTable,
+		ftable: &HashMap<String, Function>,
+		output: &mut W
+	) -> Result<u8, String> {
+		let l = compile_expression(*l, vtable, ftable, output)?;
+		let r = compile_expression(*r, vtable, ftable, output)?;
+
+		let l_size = vtable.size_of(l);
+		let r_size = vtable.size_of(r);
+		let operation_size = if l_size > r_size { l_size } else { r_size };
+
+		let result = vtable.alloc(operation_size)?;
+		// TODO: make opcodes consider operation size.
+
+		writeln!(output, "\tstd@{op}_u8 {result}, {l}, {r}").map_err(|err| err.to_string())?;
+		Ok(result)
+	}
+
 	match rpn {
 		Rpn::Variable(..) => todo!(),
 		Rpn::Signed(value) => {
 			// The "default" type of an integer is i8 (think C's int)
 			// This is because most projects will probably only have the 8-bit bytecode installed.
 			// TODO: make the default integer type configurable per-environment
-			let container = variable_table.alloc(1)?;
-			// put (container), value
-			writeln!(output, "\tstd@put_u8, {container}, {value}").map_err(|err| err.to_string())?;
-			Ok(container)
+			let result = vtable.alloc(1)?;
+			// put (result), value
+			writeln!(output, "\tstd@put_u8 {result}, {value}").map_err(|err| err.to_string())?;
+			Ok(result)
 		}
 		Rpn::String(..) => todo!(),
 		Rpn::Call(..) => todo!(),
-		Rpn::Negate(sub_rpn) => {
-			let operand = compile_expression(*sub_rpn, variable_table, function_table, output)?;
-			let operand_size = variable_table.size_of(operand);
-			let zero = variable_table.alloc(operand_size)?;
+		Rpn::Negate(i) => {
+			let operand = compile_expression(*i, vtable, ftable, output)?;
+			let operand_size = vtable.size_of(operand);
+			let zero = vtable.alloc(operand_size)?;
+			let result = vtable.alloc(operand_size)?;
 			// TODO: make opcodes consider operand size.
 			// put (zero), 0
-			writeln!(output, "\tstd@put_u8, {zero}, 0").map_err(|err| err.to_string())?;
-			// (operand) = (zero) - (operand)
-			writeln!(output, "\tstd@sub_u8, {operand}, {zero}, {operand}").map_err(|err| err.to_string())?;
-			Ok(operand)
+			writeln!(output, "\tstd@put_u8 {zero}, 0").map_err(|err| err.to_string())?;
+			// (result) = (zero) - (operand)
+			writeln!(output, "\tstd@sub_u8 {result}, {zero}, {operand}").map_err(|err| err.to_string())?;
+			Ok(result)
 		}
 		Rpn::Deref(..) => todo!(),
 		Rpn::Not(..) => todo!(),
 		Rpn::Address(..) => todo!(),
-		Rpn::Mul(..) => todo!(),
-		Rpn::Div(..) => todo!(),
-		Rpn::Mod(..) => todo!(),
-		Rpn::Add(..) => todo!(),
-		Rpn::Sub(..) => todo!(),
-		Rpn::ShiftLeft(..) => todo!(),
-		Rpn::ShiftRight(..) => todo!(),
-		Rpn::BinaryAnd(..) => todo!(),
-		Rpn::BinaryXor(..) => todo!(),
-		Rpn::BinaryOr(..) => todo!(),
-		Rpn::Equ(..) => todo!(),
-		Rpn::NotEqu(..) => todo!(),
-		Rpn::LessThan(..) => todo!(),
-		Rpn::GreaterThan(..) => todo!(),
-		Rpn::LessThanEqu(..) => todo!(),
-		Rpn::GreaterThanEqu(..) => todo!(),
-		Rpn::LogicalAnd(..) => todo!(),
-		Rpn::LogicalOr(..) => todo!(),
+		Rpn::Mul(l, r) => binary_operation(l, "mul", r, vtable, ftable, output),
+		Rpn::Div(l, r) => binary_operation(l, "div", r, vtable, ftable, output),
+		Rpn::Mod(l, r) => binary_operation(l, "mod", r, vtable, ftable, output),
+		Rpn::Add(l, r) => binary_operation(l, "add", r, vtable, ftable, output),
+		Rpn::Sub(l, r) => binary_operation(l, "sub", r, vtable, ftable, output),
+		Rpn::ShiftLeft(l, r) => binary_operation(l, "shl", r, vtable, ftable, output),
+		Rpn::ShiftRight(l, r) => binary_operation(l, "shr", r, vtable, ftable, output),
+		Rpn::BinaryAnd(l, r) => binary_operation(l, "band", r, vtable, ftable, output),
+		Rpn::BinaryXor(l, r) => binary_operation(l, "bxor", r, vtable, ftable, output),
+		Rpn::BinaryOr(l, r) => binary_operation(l, "bor", r, vtable, ftable, output),
+		Rpn::Equ(l, r) => binary_operation(l, "equ", r, vtable, ftable, output),
+		Rpn::NotEqu(l, r) => binary_operation(l, "nequ", r, vtable, ftable, output),
+		Rpn::LessThan(l, r) => binary_operation(l, "lt", r, vtable, ftable, output),
+		Rpn::GreaterThan(l, r) => binary_operation(l, "gt", r, vtable, ftable, output),
+		Rpn::LessThanEqu(l, r) => binary_operation(l, "lte", r, vtable, ftable, output),
+		Rpn::GreaterThanEqu(l, r) => binary_operation(l, "gte", r, vtable, ftable, output),
+		Rpn::LogicalAnd(l, r) => binary_operation(l, "land", r, vtable, ftable, output),
+		Rpn::LogicalOr(l, r) => binary_operation(l, "lor", r, vtable, ftable, output),
 		Rpn::Set(..) => todo!(),
 	}
 }
