@@ -24,12 +24,32 @@ impl Environment {
 	}
 }
 
-struct Variable {
-	name: Option<String>,
-	index: u8,
+type EnvironmentTable = HashMap<String, Environment>;
+
+#[derive(Debug, Copy, Clone)]
+struct Type {
+	signed: bool,
 	size: u8,
 }
 
+impl Type {
+	fn from(l: Type, r: Type) -> Type {
+		Type {
+			signed: l.signed || r.signed,
+			size: if l.size >= r.size { l.size } else { r.size },
+		}
+	}
+}
+
+type TypeTable = HashMap<String, Type>;
+
+#[derive(Debug)]
+struct Variable {
+	name: Option<String>,
+	t: Type,
+}
+
+#[derive(Debug)]
 struct VariableTable {
 	variables: [Option<Variable>; 256]
 }
@@ -56,17 +76,18 @@ impl VariableTable {
 		]}
 	}
 
-	fn alloc(&mut self, size: u8) -> Result<u8, String> {
-		for mut i in 0..256 {
+	fn alloc(&mut self, t: Type) -> Result<u8, String> {
+		let mut i = 0;
+
+		while i < 256 {
 			match &self.variables[i] {
-				Some(var) => i += var.size as usize,
+				Some(var) => i += var.t.size as usize,
 				None => {
-					let mut new_var = Variable {
+					let new_var = Variable {
 						name: None,
-						index: i as u8,
-						size,
+						t,
 					};
-					self.variables[i] = Some(new_var);
+					self.variables[i as usize] = Some(new_var);
 					return Ok(i as u8);
 				}
 			}
@@ -76,14 +97,18 @@ impl VariableTable {
 	}
 
 	fn lookup(&self, name: &str) -> Result<u8, String> {
-		for mut i in 0..256 {
+		let mut i = 0;
+
+		while i < 256 {
 			if let Some(variable) = &self.variables[i] {
 				if let Some(variable_name) = &variable.name {
 					if variable_name == name {
 						return Ok(i as u8);
 					}
 				}
-				i += variable.size as usize;
+				i += variable.t.size as usize;
+			} else {
+				i += 1;
 			}
 		}
 
@@ -97,18 +122,18 @@ impl VariableTable {
 		}
 	}
 
-	fn size_of(&mut self, i: u8) -> u8 {
+	fn type_of(&mut self, i: u8) -> Type {
 		match &self.variables[i as usize] {
-			Some(var) => var.size,
+			Some(var) => var.t,
 			None => panic!("Variable index {i} does not exist"),
 		}
 	}
 }
 
 fn compile_environment(
-	name: &str,
+	this_name: &str,
 	env: types::Environment,
-	environment_table: &HashMap<String, Environment>
+	environment_table: &EnvironmentTable
 ) -> Result<Environment, String> {
 	let mut compiled_env = Environment {
 		definitions: HashMap::<String, types::Definition>::new(),
@@ -135,7 +160,7 @@ fn compile_environment(
 						types::Definition::Def(ref mut sub_def) => {
 							sub_def.bytecode = bytecode_index;
 							bytecode_index = bytecode_index.checked_add(1)
-								.ok_or(format!("Hit bytecode limit in environment {name}"))?;
+								.ok_or(format!("Hit bytecode limit in environment {this_name}"))?;
 						}
 						_ => {}
 					}
@@ -151,7 +176,7 @@ fn compile_environment(
 						types::Definition::Def(ref mut sub_def) => {
 							sub_def.bytecode = bytecode_index;
 							bytecode_index = bytecode_index.checked_add(1)
-								.ok_or(format!("Hit bytecode limit in environment {name}"))?;
+								.ok_or(format!("Hit bytecode limit in environment {this_name}"))?;
 						}
 						_ => {}
 					}
@@ -192,11 +217,8 @@ fn compile_expression<W: Write>(
 		let l = compile_expression(*l, vtable, output)?;
 		let r = compile_expression(*r, vtable, output)?;
 
-		let l_size = vtable.size_of(l);
-		let r_size = vtable.size_of(r);
-		let operation_size = if l_size > r_size { l_size } else { r_size };
-
-		let result = vtable.alloc(operation_size)?;
+		let result_type = Type::from(vtable.type_of(l), vtable.type_of(r));
+		let result = vtable.alloc(result_type)?;
 		// TODO: make opcodes consider operation size.
 
 		writeln!(output, "\tstd@{op}_u8 {result}, {l}, {r}").map_err(|err| err.to_string())?;
@@ -209,7 +231,7 @@ fn compile_expression<W: Write>(
 			// The "default" type of an integer is i8 (think C's int)
 			// This is because most projects will probably only have the 8-bit bytecode installed.
 			// TODO: make the default integer type configurable per-environment
-			let result = vtable.alloc(1)?;
+			let result = vtable.alloc(Type { signed: false, size: 1 })?;
 			// put (result), value
 			writeln!(output, "\tstd@put_u8 {result}, {value}").map_err(|err| err.to_string())?;
 			Ok(result)
@@ -218,9 +240,9 @@ fn compile_expression<W: Write>(
 		Rpn::Call(..) => todo!(),
 		Rpn::Negate(i) => {
 			let operand = compile_expression(*i, vtable, output)?;
-			let operand_size = vtable.size_of(operand);
-			let zero = vtable.alloc(operand_size)?;
-			let result = vtable.alloc(operand_size)?;
+			let operand_type = vtable.type_of(operand);
+			let zero = vtable.alloc(operand_type)?;
+			let result = vtable.alloc(operand_type)?;
 			// TODO: make opcodes consider operand size.
 			writeln!(output, "\tstd@put_u8 {zero}, 0").map_err(|err| err.to_string())?;
 			writeln!(output, "\tstd@sub_u8 {result}, {zero}, {operand}").map_err(|err| err.to_string())?;
@@ -228,10 +250,10 @@ fn compile_expression<W: Write>(
 		}
 		Rpn::Not(i) => {
 			let operand = compile_expression(*i, vtable, output)?;
-			let operand_size = vtable.size_of(operand);
+			let operand_type = vtable.type_of(operand);
 			// TODO: make the default integer type configurable per-environment
-			let ff = vtable.alloc(operand_size)?;
-			let result = vtable.alloc(operand_size)?;
+			let ff = vtable.alloc(operand_type)?;
+			let result = vtable.alloc(operand_type)?;
 			writeln!(output, "\tstd@put_u8 {ff}, $FF").map_err(|err| err.to_string())?;
 			writeln!(output, "\tstd@xor_u8 {result}, {operand}, {ff}").map_err(|err| err.to_string())?;
 			Ok(result)
@@ -278,14 +300,14 @@ fn compile_statement<W: Write>(
 		}
 		types::Statement::Declaration(t, name) => {
 			eprintln!("WARN: type currently defaults to u8");
-			let new_var = vtable.alloc(1)?;
+			let new_var = vtable.alloc(Type { signed: false, size: 1 })?;
 			*vtable.name_of(new_var) = Some(name);
 		}
 		types::Statement::DeclareAssign(t, name, rpn) => {
 			eprintln!("WARN: type currently defaults to u8");
 
 			// Create a new variable
-			let new_var = vtable.alloc(1)?;
+			let new_var = vtable.alloc(Type { signed: false, size: 1 })?;
 			*vtable.name_of(new_var) = Some(name.clone());
 			// Compile the Set.
 			compile_expression(rpn, vtable, output)?;
@@ -305,7 +327,8 @@ fn compile_statement<W: Write>(
 fn compile_function<W: Write>(
 	name: &str,
 	func: types::Function,
-	environment_table: &HashMap<String, Environment>,
+	environment_table: &EnvironmentTable,
+	type_table: &TypeTable,
 	output: &mut W
 ) -> Result<(), String> {
 	let env = match environment_table.get(&func.environment) {
@@ -326,8 +349,12 @@ fn compile_function<W: Write>(
 }
 
 pub fn compile<W: Write>(ast: Vec<types::Root>, mut output: W) -> Result<(), String> {
-	let mut environment_table = HashMap::<String, Environment>::from([
+	let mut environment_table = EnvironmentTable::from([
 		(String::from("std"), Environment::std()),
+	]);
+
+	let mut type_table = TypeTable::from([
+		(String::from("u8"), Type { signed: false, size: 1} ),
 	]);
 
 	for i in ast {
@@ -337,7 +364,13 @@ pub fn compile<W: Write>(ast: Vec<types::Root>, mut output: W) -> Result<(), Str
 				environment_table.insert(name, new_env);
 			}
 			types::Root::Function(name, func) => {
-				let new_func = compile_function(&name, func, &environment_table, &mut output)?;
+				let new_func = compile_function(
+					&name,
+					func,
+					&environment_table,
+					&type_table,
+					&mut output
+				)?;
 			}
 			types::Root::Assembly(contents) => todo!(),
 			types::Root::Include(path) => todo!(),
