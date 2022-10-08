@@ -29,5 +29,5 @@ env npc {
 }
 
 script Main {
-	u8 i = 8 + !5;
+	u16 i = 8 + !5;
 }
