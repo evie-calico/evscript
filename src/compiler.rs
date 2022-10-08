@@ -8,7 +8,6 @@ use std::io::Write;
 struct Environment {
 	definitions: HashMap<String, types::Definition>,
 	pool: u16,
-	terminator: Option<u8>,
 }
 
 impl Environment {
@@ -21,14 +20,8 @@ impl Environment {
 				),
 			]),
 			pool: 0,
-			terminator: None
 		}
 	}
-}
-
-struct Function {
-	env: String,
-	args: Vec<String>,
 }
 
 struct Variable {
@@ -120,7 +113,6 @@ fn compile_environment(
 	let mut compiled_env = Environment {
 		definitions: HashMap::<String, types::Definition>::new(),
 		pool: 0,
-		terminator: None,
 	};
 
 	let mut bytecode_index: u8 = 0;
@@ -177,9 +169,6 @@ fn compile_environment(
 					pool_size as u16
 				};
 			}
-			types::Statement::Terminator(name) => {
-				eprintln!("`terminator` is unimplemented");
-			}
 			_ => return Err(format!("Statement {i:?} is not allowed within environments.")),
 		}
 	}
@@ -191,7 +180,6 @@ fn compile_environment(
 fn compile_expression<W: Write>(
 	rpn: Rpn,
 	vtable: & mut VariableTable,
-	ftable: &HashMap<String, Function>,
 	output: &mut W
 ) -> Result<u8, String> {
 	fn binary_operation<W: Write>(
@@ -199,11 +187,10 @@ fn compile_expression<W: Write>(
 		op: &str,
 		r: Box<Rpn>,
 		vtable: & mut VariableTable,
-		ftable: &HashMap<String, Function>,
 		output: &mut W
 	) -> Result<u8, String> {
-		let l = compile_expression(*l, vtable, ftable, output)?;
-		let r = compile_expression(*r, vtable, ftable, output)?;
+		let l = compile_expression(*l, vtable, output)?;
+		let r = compile_expression(*r, vtable, output)?;
 
 		let l_size = vtable.size_of(l);
 		let r_size = vtable.size_of(r);
@@ -230,7 +217,7 @@ fn compile_expression<W: Write>(
 		Rpn::String(..) => todo!(),
 		Rpn::Call(..) => todo!(),
 		Rpn::Negate(i) => {
-			let operand = compile_expression(*i, vtable, ftable, output)?;
+			let operand = compile_expression(*i, vtable, output)?;
 			let operand_size = vtable.size_of(operand);
 			let zero = vtable.alloc(operand_size)?;
 			let result = vtable.alloc(operand_size)?;
@@ -240,7 +227,7 @@ fn compile_expression<W: Write>(
 			Ok(result)
 		}
 		Rpn::Not(i) => {
-			let operand = compile_expression(*i, vtable, ftable, output)?;
+			let operand = compile_expression(*i, vtable, output)?;
 			let operand_size = vtable.size_of(operand);
 			// TODO: make the default integer type configurable per-environment
 			let ff = vtable.alloc(operand_size)?;
@@ -251,29 +238,29 @@ fn compile_expression<W: Write>(
 		}
 		Rpn::Deref(..) => todo!(),
 		Rpn::Address(..) => todo!(),
-		Rpn::Mul(l, r) => binary_operation(l, "mul", r, vtable, ftable, output),
-		Rpn::Div(l, r) => binary_operation(l, "div", r, vtable, ftable, output),
-		Rpn::Mod(l, r) => binary_operation(l, "mod", r, vtable, ftable, output),
-		Rpn::Add(l, r) => binary_operation(l, "add", r, vtable, ftable, output),
-		Rpn::Sub(l, r) => binary_operation(l, "sub", r, vtable, ftable, output),
-		Rpn::ShiftLeft(l, r) => binary_operation(l, "shl", r, vtable, ftable, output),
-		Rpn::ShiftRight(l, r) => binary_operation(l, "shr", r, vtable, ftable, output),
-		Rpn::BinaryAnd(l, r) => binary_operation(l, "band", r, vtable, ftable, output),
-		Rpn::BinaryXor(l, r) => binary_operation(l, "bxor", r, vtable, ftable, output),
-		Rpn::BinaryOr(l, r) => binary_operation(l, "bor", r, vtable, ftable, output),
-		Rpn::Equ(l, r) => binary_operation(l, "equ", r, vtable, ftable, output),
-		Rpn::NotEqu(l, r) => binary_operation(l, "nequ", r, vtable, ftable, output),
-		Rpn::LessThan(l, r) => binary_operation(l, "lt", r, vtable, ftable, output),
-		Rpn::GreaterThan(l, r) => binary_operation(l, "gt", r, vtable, ftable, output),
-		Rpn::LessThanEqu(l, r) => binary_operation(l, "lte", r, vtable, ftable, output),
-		Rpn::GreaterThanEqu(l, r) => binary_operation(l, "gte", r, vtable, ftable, output),
-		Rpn::LogicalAnd(l, r) => binary_operation(l, "land", r, vtable, ftable, output),
-		Rpn::LogicalOr(l, r) => binary_operation(l, "lor", r, vtable, ftable, output),
+		Rpn::Mul(l, r) => binary_operation(l, "mul", r, vtable, output),
+		Rpn::Div(l, r) => binary_operation(l, "div", r, vtable, output),
+		Rpn::Mod(l, r) => binary_operation(l, "mod", r, vtable, output),
+		Rpn::Add(l, r) => binary_operation(l, "add", r, vtable, output),
+		Rpn::Sub(l, r) => binary_operation(l, "sub", r, vtable, output),
+		Rpn::ShiftLeft(l, r) => binary_operation(l, "shl", r, vtable, output),
+		Rpn::ShiftRight(l, r) => binary_operation(l, "shr", r, vtable, output),
+		Rpn::BinaryAnd(l, r) => binary_operation(l, "band", r, vtable, output),
+		Rpn::BinaryXor(l, r) => binary_operation(l, "bxor", r, vtable, output),
+		Rpn::BinaryOr(l, r) => binary_operation(l, "bor", r, vtable, output),
+		Rpn::Equ(l, r) => binary_operation(l, "equ", r, vtable, output),
+		Rpn::NotEqu(l, r) => binary_operation(l, "nequ", r, vtable, output),
+		Rpn::LessThan(l, r) => binary_operation(l, "lt", r, vtable, output),
+		Rpn::GreaterThan(l, r) => binary_operation(l, "gt", r, vtable, output),
+		Rpn::LessThanEqu(l, r) => binary_operation(l, "lte", r, vtable, output),
+		Rpn::GreaterThanEqu(l, r) => binary_operation(l, "gte", r, vtable, output),
+		Rpn::LogicalAnd(l, r) => binary_operation(l, "land", r, vtable, output),
+		Rpn::LogicalOr(l, r) => binary_operation(l, "lor", r, vtable, output),
 		Rpn::Set(name, i) => {
 			// A plain Set may only assign to existing variables.
 			let dest = vtable.lookup(&name)?;
 			// TODO: make this directly take ownership of i if it is not an Rpn::Variable.
-			let source = compile_expression(*i, vtable, ftable, output)?;
+			let source = compile_expression(*i, vtable, output)?;
 			writeln!(output, "\tstd@mov_u8 {dest}, {source}").map_err(|err| err.to_string())?;
 			Ok(dest)
 		}
@@ -283,12 +270,11 @@ fn compile_expression<W: Write>(
 fn compile_statement<W: Write>(
 	statement: types::Statement,
 	vtable: &mut VariableTable,
-	ftable: &HashMap<String, Function>,
 	output: &mut W
 ) -> Result<(), String> {
 	match statement {
 		types::Statement::Expression(rpn) => {
-			compile_expression(rpn, vtable, ftable, output)?;
+			compile_expression(rpn, vtable, output)?;
 		}
 		types::Statement::Declaration(t, name) => {
 			eprintln!("WARN: type currently defaults to u8");
@@ -302,7 +288,7 @@ fn compile_statement<W: Write>(
 			let new_var = vtable.alloc(1)?;
 			*vtable.name_of(new_var) = Some(name.clone());
 			// Compile the Set.
-			compile_expression(rpn, vtable, ftable, output)?;
+			compile_expression(rpn, vtable, output)?;
 		},
 		types::Statement::If(..) => todo!(),
 		types::Statement::While(..) => todo!(),
@@ -319,35 +305,27 @@ fn compile_statement<W: Write>(
 fn compile_function<W: Write>(
 	name: &str,
 	func: types::Function,
-	ftable: &HashMap<String, Function>,
 	environment_table: &HashMap<String, Environment>,
 	output: &mut W
-) -> Result<Function, String> {
+) -> Result<(), String> {
 	let env = match environment_table.get(&func.environment) {
 		Some(env) => env,
 		None => return Err(format!("Environment {} does not exist", func.environment)),
-	};
-	let compiled_function = Function {
-		env: func.environment,
-		args: vec![],
 	};
 	let mut vtable = VariableTable::new();
 
 	writeln!(output, "section \"{name} evscript fn\", romx\n{name}::").map_err(|err| err.to_string())?;
 
 	for i in func.contents {
-		compile_statement(i, &mut vtable, &ftable, output)?;
+		compile_statement(i, &mut vtable, output)?;
 	}
 
-	if let Some(terminator) = env.terminator {
-		writeln!(output, "\tdb {terminator}").map_err(|err| err.to_string())?;
-	}
+	writeln!(output, "\tdb 0").map_err(|err| err.to_string())?;
 
-	Ok(compiled_function)
+	Ok(())
 }
 
 pub fn compile<W: Write>(ast: Vec<types::Root>, mut output: W) -> Result<(), String> {
-	let mut ftable = HashMap::<String, Function>::new();
 	let mut environment_table = HashMap::<String, Environment>::from([
 		(String::from("std"), Environment::std()),
 	]);
@@ -359,8 +337,7 @@ pub fn compile<W: Write>(ast: Vec<types::Root>, mut output: W) -> Result<(), Str
 				environment_table.insert(name, new_env);
 			}
 			types::Root::Function(name, func) => {
-				let new_func = compile_function(&name, func, &ftable, &environment_table, &mut output)?;
-				ftable.insert(name, new_func);
+				let new_func = compile_function(&name, func, &environment_table, &mut output)?;
 			}
 			types::Root::Assembly(contents) => todo!(),
 			types::Root::Include(path) => todo!(),

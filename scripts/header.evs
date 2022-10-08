@@ -17,7 +17,6 @@ env script {
 	def npc_lock();
 
 	pool = 16;
-	terminator = return;
 }
 
 env npc {
@@ -29,6 +28,6 @@ env npc {
 	pool = 8;
 }
 
-script fn Main() {
+script Main {
 	u8 i = 8 + !5;
 }

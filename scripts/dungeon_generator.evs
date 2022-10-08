@@ -4,7 +4,7 @@ include "../include/script.evs";
 	include "dungeon.inc"
 #end
 
-script fn xGenerateScraper() {
+script xGenerateScraper {
 	u8 x = 32;
 	u8 y = 32;
 
@@ -16,7 +16,7 @@ script fn xGenerateScraper() {
 	map_put_tile(x, y, TILE_EXIT);
 }
 
-script fn xGenerateHalls() {
+script xGenerateHalls {
 	u8 direction = rand() & 3;
 
 	u8 width = rand() & 3 + 4;
@@ -93,7 +93,7 @@ script fn xGenerateHalls() {
 	map_put_tile(x, y, TILE_EXIT);
 }
 
-script fn xGenerateItems() {
+script xGenerateItems {
 	do {
 		u8 x = rand() & 63;
 		u8 y = rand() & 63;

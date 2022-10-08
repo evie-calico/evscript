@@ -8,7 +8,6 @@ My main goals are:
 3. Scoped variables (remove `drop`)
 4. Structures
 5. Bytecode return values
-6. Functions
 7. Codegen Optimizations
 
 I am rewriting evscript to remove its dependency on Bison and Flex, and to make it easier to install, using `cargo`.

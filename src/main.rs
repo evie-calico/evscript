@@ -17,10 +17,7 @@ fn main() {
 		};
 
 		let ast = match evscript::parse(input) {
-			Ok(ast) => {
-				println!("{ast:?}\n");
-				ast
-			}
+			Ok(ast) => ast,
 			Err(err) => {
 				eprintln!("{path}: {err}");
 				exit(1);

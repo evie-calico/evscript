@@ -8,7 +8,6 @@ pub enum Statement {
 	Use(String),
 	Definition(String, Definition),
 	Pool(Rpn),
-	Terminator(String),
 	// Function statements
 	Expression(Rpn),
 	Declaration(String, String),
@@ -38,7 +37,6 @@ pub struct Environment {
 #[derive(Debug)]
 pub struct Function {
 	pub environment: String,
-	pub args: Vec<String>,
 	pub contents: Vec<Statement>
 }
 
