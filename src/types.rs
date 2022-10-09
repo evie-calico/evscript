@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::vec::Vec;
 
 #[derive(Debug)]
@@ -66,10 +64,16 @@ pub struct Macro {
 pub struct Alias {
 	pub args: Vec<String>,
 	pub target: String,
-	pub target_args: Vec<String>,
+	pub target_args: Vec<AliasParam>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+pub enum AliasParam {
+	ArgId(usize),
+	Expression(Rpn),
+}
+
+#[derive(Debug, Clone)]
 pub enum Rpn {
 	// Values
 	Variable(String),

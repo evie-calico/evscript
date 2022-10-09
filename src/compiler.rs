@@ -89,27 +89,28 @@ impl Environment {
 	}
 
 	fn expand(&self, name: &str) -> Result<String, String> {
-		let def = match self.definitions.get(name) {
-			Some(def) => def,
-			None => return Err(format!("Definition of {name} not found in {self:#?}")),
-		};
-
-		match def {
-			types::Definition::Def(def) => {
+		match self.lookup(name)? {
+			types::Definition::Def(..) => {
 				Ok(format!("{}@{}", self.name, name))
 			}
 			types::Definition::Alias(alias) => {
 				self.expand(&alias.target)
 			}
 			types::Definition::Macro(..) => Err(format!("{name} may not be a macro")),
-			_ => Err(format!("{name} is not defined")),
+		}
+	}
+
+	fn lookup(&self, name: &str) -> Result<&types::Definition, String> {
+		match self.definitions.get(name) {
+			Some(def) => Ok(def),
+			None => return Err(format!("Definition of {name} not found")),
 		}
 	}
 }
 
 type EnvironmentTable = HashMap<String, Environment>;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 struct Type {
 	signed: bool,
 	size: u8,
@@ -130,7 +131,18 @@ impl fmt::Display for Type {
 	}
 }
 
-type TypeTable = HashMap<String, Type>;
+struct TypeTable {
+	table: HashMap<String, Type>,
+}
+
+impl TypeTable {
+	fn lookup(&self, name: &str) -> Result<Type, String> {
+		match self.table.get(name) {
+			Some(t) => Ok(*t),
+			None => return Err(format!("Type {name} not found")),
+		}
+	}
+}
 
 #[derive(Debug)]
 struct Variable {
@@ -309,7 +321,8 @@ fn compile_environment<W: Write>(
 fn compile_expression<W: Write>(
 	rpn: Rpn,
 	env: &Environment,
-	vtable: & mut VariableTable,
+	type_table: &TypeTable,
+	vtable: &mut VariableTable,
 	output: &mut W
 ) -> Result<u8, String> {
 	fn binary_operation<W: Write>(
@@ -317,11 +330,12 @@ fn compile_expression<W: Write>(
 		op: &str,
 		r: Box<Rpn>,
 		env: &Environment,
+		type_table: &TypeTable,
 		vtable: & mut VariableTable,
 		output: &mut W
 	) -> Result<u8, String> {
-		let l = compile_expression(*l, env, vtable, output)?;
-		let r = compile_expression(*r, env, vtable, output)?;
+		let l = compile_expression(*l, env, type_table, vtable, output)?;
+		let r = compile_expression(*r, env, type_table, vtable, output)?;
 
 		let result_type = Type::from(vtable.type_of(l), vtable.type_of(r));
 		let result = vtable.alloc(result_type)?;
@@ -347,22 +361,131 @@ fn compile_expression<W: Write>(
 		}
 		Rpn::String(..) => todo!(),
 		Rpn::Call(name, args) => {
-			let mut arg_ids = Vec::<u8>::new();
+			match env.lookup(&name)? {
+				types::Definition::Def(def) => {
+					let mut arg_ids = Vec::<u8>::new();
 
-			for i in args {
-				arg_ids.push(compile_expression(i, env, vtable, output)?);
+					if args.len() > def.args.len() {
+						return Err(String::from("Too many arguments"));
+					} else if args.len() < def.args.len() {
+						return Err(String::from("Not enough arguments"));
+					}
+
+					let mut index = 0;
+					for i in args {
+						let this_arg = compile_expression(i, env, type_table, vtable, output)?;
+						let expected_type = type_table.lookup(&def.args[index])?;
+						if expected_type != vtable.type_of(this_arg) {
+							eprintln!("WARN: argument type does not match definition");
+						}
+
+						arg_ids.push(this_arg);
+						index += 1;
+					}
+					write!(output, "\tdb {}", env.expand(&name)?)
+						.map_err(|err| err.to_string())?;
+					for i in arg_ids {
+						write!(output, ", {i}")
+							.map_err(|err| err.to_string())?;
+					}
+					writeln!(output, "")
+						.map_err(|err| err.to_string())?;
+					eprintln!("TODO: Function return values are unimplemented");
+					Ok(0)
+				}
+				types::Definition::Alias(alias) => {
+					let mut arg_ids = Vec::<u8>::new();
+
+					enum AliasVariant {
+						ArgId(usize),
+						ExpressionId(u8),
+					}
+					let mut alias_ids = Vec::<AliasVariant>::new();
+
+					if args.len() > alias.args.len() {
+						return Err(String::from("Too many arguments"));
+					} else if args.len() < alias.args.len() {
+						return Err(String::from("Not enough arguments"));
+					}
+
+					let mut index = 0;
+					for i in args {
+						let this_arg = compile_expression(i, env, type_table, vtable, output)?;
+						let expected_type = type_table.lookup(&alias.args[index])?;
+						if expected_type != vtable.type_of(this_arg) {
+							eprintln!("WARN: argument type does not match definition");
+						}
+
+						arg_ids.push(this_arg);
+						index += 1;
+					}
+
+					for i in &alias.target_args {
+						match i {
+							types::AliasParam::ArgId(index) => alias_ids.push(AliasVariant::ArgId(*index)),
+							types::AliasParam::Expression(rpn) => {
+								alias_ids.push(AliasVariant::ExpressionId(compile_expression(rpn.clone(), env, type_table, vtable, output)?))
+							}
+						}
+					}
+
+					write!(output, "\tdb {}", env.expand(&name)?)
+						.map_err(|err| err.to_string())?;
+					for i in alias_ids {
+						match i {
+							AliasVariant::ExpressionId(index) => write!(output, ", {index}")
+								.map_err(|err| err.to_string())?,
+							AliasVariant::ArgId(index) => {
+								if index > arg_ids.len() {
+									return Err(format!("Argument ID is too large ({index})"));
+								}
+								write!(output, ", {}", arg_ids[index - 1])
+									.map_err(|err| err.to_string())?;
+							}
+						}
+					}
+					writeln!(output, "")
+						.map_err(|err| err.to_string())?;
+					eprintln!("TODO: Function return values are unimplemented");
+					Ok(0)
+				}
+				types::Definition::Macro(mac) => {
+					let mut arg_ids = Vec::<u8>::new();
+
+					if args.len() > mac.args.len() && !mac.varargs {
+						return Err(String::from("Too many arguments"));
+					} else if args.len() < mac.args.len() {
+						return Err(String::from("Not enough arguments"));
+					}
+
+					let mut index = 0;
+					for i in args {
+						let this_arg = compile_expression(i, env, type_table, vtable, output)?;
+						if index < mac.args.len() {
+							let expected_type = type_table.lookup(&mac.args[index])?;
+							if expected_type != vtable.type_of(this_arg) {
+								eprintln!("WARN: argument type does not match definition");
+							}
+						}
+
+						arg_ids.push(this_arg);
+						index += 1;
+					}
+					write!(output, "\t{}", mac.target)
+						.map_err(|err| err.to_string())?;
+					for i in arg_ids {
+						write!(output, " {i},")
+							.map_err(|err| err.to_string())?;
+					}
+					writeln!(output, "")
+						.map_err(|err| err.to_string())?;
+					eprintln!("TODO: Function return values are unimplemented");
+					Ok(0)
+				}
 			}
-			write!(output, "\tdb {}", env.expand(&name)?)
-				.map_err(|err| err.to_string())?;
-			for i in arg_ids {
-				write!(output, ", {i}")
-					.map_err(|err| err.to_string())?;
-			}
-			writeln!(output, "");
-			Ok(0)
 		}
 		Rpn::Negate(i) => {
-			let operand = compile_expression(*i, env, vtable, output)?;
+			let operand = compile_expression(*i, env, type_table, vtable, output)?;
 			let operand_type = vtable.type_of(operand);
 			let zero = vtable.alloc(operand_type)?;
 			let result = vtable.alloc(operand_type)?;
@@ -374,7 +497,7 @@ fn compile_expression<W: Write>(
 			Ok(result)
 		}
 		Rpn::Not(i) => {
-			let operand = compile_expression(*i, env, vtable, output)?;
+			let operand = compile_expression(*i, env, type_table, vtable, output)?;
 			let operand_type = vtable.type_of(operand);
 			// TODO: make the default integer type configurable per-environment
 			let ff = vtable.alloc(operand_type)?;
@@ -387,30 +510,30 @@ fn compile_expression<W: Write>(
 		}
 		Rpn::Deref(..) => todo!(),
 		Rpn::Address(..) => todo!(),
-		Rpn::Mul(l, r) => binary_operation(l, "mul", r, env, vtable, output),
-		Rpn::Div(l, r) => binary_operation(l, "div", r, env, vtable, output),
-		Rpn::Mod(l, r) => binary_operation(l, "mod", r, env, vtable, output),
-		Rpn::Add(l, r) => binary_operation(l, "add", r, env, vtable, output),
-		Rpn::Sub(l, r) => binary_operation(l, "sub", r, env, vtable, output),
-		Rpn::ShiftLeft(l, r) => binary_operation(l, "shl", r, env, vtable, output),
-		Rpn::ShiftRight(l, r) => binary_operation(l, "shr", r, env, vtable, output),
-		Rpn::BinaryAnd(l, r) => binary_operation(l, "band", r, env, vtable, output),
-		Rpn::BinaryXor(l, r) => binary_operation(l, "bxor", r, env, vtable, output),
-		Rpn::BinaryOr(l, r) => binary_operation(l, "bor", r, env, vtable, output),
-		Rpn::Equ(l, r) => binary_operation(l, "equ", r, env, vtable, output),
-		Rpn::NotEqu(l, r) => binary_operation(l, "nequ", r, env, vtable, output),
-		Rpn::LessThan(l, r) => binary_operation(l, "lt", r, env, vtable, output),
-		Rpn::GreaterThan(l, r) => binary_operation(l, "gt", r, env, vtable, output),
-		Rpn::LessThanEqu(l, r) => binary_operation(l, "lte", r, env, vtable, output),
-		Rpn::GreaterThanEqu(l, r) => binary_operation(l, "gte", r, env, vtable, output),
-		Rpn::LogicalAnd(l, r) => binary_operation(l, "land", r, env, vtable, output),
-		Rpn::LogicalOr(l, r) => binary_operation(l, "lor", r, env, vtable, output),
+		Rpn::Mul(l, r) => binary_operation(l, "mul", r, env, type_table, vtable, output),
+		Rpn::Div(l, r) => binary_operation(l, "div", r, env, type_table, vtable, output),
+		Rpn::Mod(l, r) => binary_operation(l, "mod", r, env, type_table, vtable, output),
+		Rpn::Add(l, r) => binary_operation(l, "add", r, env, type_table, vtable, output),
+		Rpn::Sub(l, r) => binary_operation(l, "sub", r, env, type_table, vtable, output),
+		Rpn::ShiftLeft(l, r) => binary_operation(l, "shl", r, env, type_table, vtable, output),
+		Rpn::ShiftRight(l, r) => binary_operation(l, "shr", r, env, type_table, vtable, output),
+		Rpn::BinaryAnd(l, r) => binary_operation(l, "band", r, env, type_table, vtable, output),
+		Rpn::BinaryXor(l, r) => binary_operation(l, "bxor", r, env, type_table, vtable, output),
+		Rpn::BinaryOr(l, r) => binary_operation(l, "bor", r, env, type_table, vtable, output),
+		Rpn::Equ(l, r) => binary_operation(l, "equ", r, env, type_table, vtable, output),
+		Rpn::NotEqu(l, r) => binary_operation(l, "nequ", r, env, type_table, vtable, output),
+		Rpn::LessThan(l, r) => binary_operation(l, "lt", r, env, type_table, vtable, output),
+		Rpn::GreaterThan(l, r) => binary_operation(l, "gt", r, env, type_table, vtable, output),
+		Rpn::LessThanEqu(l, r) => binary_operation(l, "lte", r, env, type_table, vtable, output),
+		Rpn::GreaterThanEqu(l, r) => binary_operation(l, "gte", r, env, type_table, vtable, output),
+		Rpn::LogicalAnd(l, r) => binary_operation(l, "land", r, env, type_table, vtable, output),
+		Rpn::LogicalOr(l, r) => binary_operation(l, "lor", r, env, type_table, vtable, output),
 		Rpn::Set(name, i) => {
 			// A plain Set may only assign to existing variables.
 			let dest = vtable.lookup(&name)?;
 			let dest_type = vtable.type_of(dest);
 			// TODO: make this directly take ownership of i if it is not an Rpn::Variable.
-			let source = compile_expression(*i, env, vtable, output)?;
+			let source = compile_expression(*i, env, type_table, vtable, output)?;
 			writeln!(output, "\tdb {}, {dest}, {source}", env.expand(&format!("mov_{dest_type}"))?)
 				.map_err(|err| err.to_string())?;
 			Ok(dest)
@@ -421,26 +544,24 @@ fn compile_expression<W: Write>(
 fn compile_statement<W: Write>(
 	statement: types::Statement,
 	env: &Environment,
+	type_table: &TypeTable,
 	vtable: &mut VariableTable,
 	output: &mut W
 ) -> Result<(), String> {
 	match statement {
 		types::Statement::Expression(rpn) => {
-			compile_expression(rpn, env, vtable, output)?;
+			compile_expression(rpn, env, type_table, vtable, output)?;
 		}
 		types::Statement::Declaration(t, name) => {
-			eprintln!("WARN: type currently defaults to u8");
-			let new_var = vtable.alloc(Type { signed: false, size: 1 })?;
+			let new_var = vtable.alloc(type_table.lookup(&t)?)?;
 			*vtable.name_of(new_var) = Some(name);
 		}
 		types::Statement::DeclareAssign(t, name, rpn) => {
-			eprintln!("WARN: type currently defaults to u8");
-
 			// Create a new variable
-			let new_var = vtable.alloc(Type { signed: false, size: 1 })?;
+			let new_var = vtable.alloc(type_table.lookup(&t)?)?;
 			*vtable.name_of(new_var) = Some(name.clone());
 			// Compile the Set.
-			compile_expression(rpn, env, vtable, output)?;
+			compile_expression(rpn, env, type_table, vtable, output)?;
 		},
 		types::Statement::If(..) => todo!(),
 		types::Statement::While(..) => todo!(),
@@ -471,7 +592,7 @@ fn compile_function<W: Write>(
 		.map_err(|err| err.to_string())?;
 
 	for i in func.contents {
-		compile_statement(i, env, &mut vtable, output)?;
+		compile_statement(i, env, type_table, &mut vtable, output)?;
 	}
 
 	writeln!(output, "\tdb 0")
@@ -485,9 +606,10 @@ pub fn compile<W: Write>(ast: Vec<types::Root>, mut output: W) -> Result<(), Str
 		(String::from("std"), Environment::std()),
 	]);
 
-	let mut type_table = TypeTable::from([
-		(String::from("u8"), Type { signed: false, size: 1} ),
-	]);
+	let type_table = TypeTable { table: HashMap::<String, Type>::from([
+		(String::from("u8"), Type { signed: false, size: 1 } ),
+		(String::from("i8"), Type { signed: true, size: 1 } ),
+	]) };
 
 	for i in ast {
 		match i {
@@ -496,16 +618,10 @@ pub fn compile<W: Write>(ast: Vec<types::Root>, mut output: W) -> Result<(), Str
 				environment_table.insert(name, new_env);
 			}
 			types::Root::Function(name, func) => {
-				let new_func = compile_function(
-					&name,
-					func,
-					&environment_table,
-					&type_table,
-					&mut output
-				)?;
+				compile_function(&name, func, &environment_table, &type_table, &mut output)?;
 			}
-			types::Root::Assembly(contents) => todo!(),
-			types::Root::Include(path) => todo!(),
+			types::Root::Assembly(..) => todo!(),
+			types::Root::Include(..) => todo!(),
 		}
 	}
 

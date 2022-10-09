@@ -9,7 +9,7 @@ match {
 	"+", "-", "*", "/", "%", "&", "^", "|", "<<", ">>", "!",
 	"==", "!=", "<", ">", "<=", ">=", "&&", "||",
 	"=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=",
-	"...",
+	"...", "$",
 	"(", ")", "{", "}",
 	r"[a-zA-Z_][a-zA-Z0-9_]*",
 	r#""([^"]|\.)*""#,
@@ -43,7 +43,7 @@ Statement: Statement = {
 	"def" <name:Iden> "(" <args:Comma<Iden>> ")" ";" => {
 		Statement::Definition(name, Definition::Def(Def { args, bytecode: 0 }))
 	},
-	"alias" <name:Iden> "(" <args:Comma<Iden>> ")" "=" <target:Iden> "(" <target_args:Comma<Iden>> ")" ";" => {
+	"alias" <name:Iden> "(" <args:Comma<Iden>> ")" "=" <target:Iden> "(" <target_args:Comma<AliasParam>> ")" ";" => {
 		Statement::Definition(name, Definition::Alias(Alias { args, target, target_args }))
 	},
 	"macro" <name:Iden> "(" <args:Comma<Iden>> ")" "=" <target:Iden> ";" => {
@@ -69,6 +69,14 @@ Statement: Statement = {
 
 	"return" ";" => Statement::Expression(Rpn::Call(String::from("return"), vec![])),
 	"yield" ";" => Statement::Expression(Rpn::Call(String::from("yield"), vec![])),
+}
+
+AliasParam: AliasParam = {
+	"$" <i:r"-?[0-9]+"> =>? Ok(AliasParam::ArgId(usize::from_str(i)
+		.map_err(|_| ParseError::User {
+			error: "Argument index is too large"
+		})?)),
+	<expr:Expr> => AliasParam::Expression(expr),
 }
 
 IfContainer: Statement = {

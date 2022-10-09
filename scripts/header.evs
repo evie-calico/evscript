@@ -16,6 +16,8 @@ env script {
 	def npc_set_frame(u8, u8);
 	def npc_lock();
 
+	alias move_player(u8, u8) = move_actor(wPlayer, $1, $2);
+
 	pool = 16;
 }
 
@@ -23,11 +25,11 @@ env npc {
 	use script;
 	macro move(...) = npc_move;
 	macro set_frame(...) = npc_set_frame;
-	alias lock() = npc_lock();
+	alias lock(u8, u8) = npc_lock($2, $1);
 	alias wait() = print_wait();
 	pool = 8;
 }
 
-script Main {
-	rand(6, !7, 8*9);
+npc Main {
+	lock(1, 2);
 }
