@@ -91,7 +91,7 @@ impl Environment {
 	fn expand(&self, name: &str) -> Result<String, String> {
 		let def = match self.definitions.get(name) {
 			Some(def) => def,
-			None => return Err(format!("Definition of {name} not found")),
+			None => return Err(format!("Definition of {name} not found in {self:#?}")),
 		};
 
 		match def {
@@ -346,7 +346,21 @@ fn compile_expression<W: Write>(
 			Ok(result)
 		}
 		Rpn::String(..) => todo!(),
-		Rpn::Call(..) => todo!(),
+		Rpn::Call(name, args) => {
+			let mut arg_ids = Vec::<u8>::new();
+
+			for i in args {
+				arg_ids.push(compile_expression(i, env, vtable, output)?);
+			}
+			write!(output, "\tdb {}", env.expand(&name)?)
+				.map_err(|err| err.to_string())?;
+			for i in arg_ids {
+				write!(output, ", {i}")
+					.map_err(|err| err.to_string())?;
+			}
+			writeln!(output, "");
+			Ok(0)
+		}
 		Rpn::Negate(i) => {
 			let operand = compile_expression(*i, env, vtable, output)?;
 			let operand_type = vtable.type_of(operand);
