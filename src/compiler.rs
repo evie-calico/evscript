@@ -324,7 +324,7 @@ fn compile_expression<W: Write>(
 	type_table: &TypeTable,
 	vtable: &mut VariableTable,
 	output: &mut W
-) -> Result<u8, String> {
+) -> Result<Option<u8>, String> {
 	fn binary_operation<W: Write>(
 		l: Box<Rpn>,
 		op: &str,
@@ -333,9 +333,11 @@ fn compile_expression<W: Write>(
 		type_table: &TypeTable,
 		vtable: & mut VariableTable,
 		output: &mut W
-	) -> Result<u8, String> {
-		let l = compile_expression(*l, env, type_table, vtable, output)?;
-		let r = compile_expression(*r, env, type_table, vtable, output)?;
+	) -> Result<Option<u8>, String> {
+		let l = compile_expression(*l, env, type_table, vtable, output)?
+			.ok_or(String::from("Expression has no return value"))?;
+		let r = compile_expression(*r, env, type_table, vtable, output)?
+			.ok_or(String::from("Expression has no return value"))?;
 
 		let result_type = Type::from(vtable.type_of(l), vtable.type_of(r));
 		let result = vtable.alloc(result_type)?;
@@ -343,44 +345,65 @@ fn compile_expression<W: Write>(
 
 		writeln!(output, "\tdb {}, {result}, {l}, {r}", env.expand(&format!("{op}_{result_type}"))?)
 			.map_err(|err| err.to_string())?;
-		Ok(result)
+		Ok(Some(result))
 	}
 
 	match rpn {
-		Rpn::Variable(name) => vtable.lookup(&name),
+		Rpn::Variable(name) => Ok(Some(vtable.lookup(&name)?)),
 		Rpn::Signed(value) => {
-			// The "default" type of an integer is i8 (think C's int)
+			// The "default" type of an integer is u8 (think C's int)
 			// This is because most projects will probably only have the 8-bit bytecode installed.
 			// TODO: make the default integer type configurable per-environment
-			let result_type = Type { signed: true, size: 1 };
+			let result_type = Type { signed: false, size: 1 };
 			let result = vtable.alloc(result_type)?;
 			// put (result), value
 			writeln!(output, "\tdb {}, {result}, {value}", env.expand(&format!("put_{result_type}"))?)
 				.map_err(|err| err.to_string())?;
-			Ok(result)
+			Ok(Some(result))
 		}
 		Rpn::String(..) => todo!(),
 		Rpn::Call(name, args) => {
 			match env.lookup(&name)? {
 				types::Definition::Def(def) => {
-					let mut arg_ids = Vec::<u8>::new();
+					let mut def_arg_count = 0;
+					let mut return_id: Option<u8> = None;
 
-					if args.len() > def.args.len() {
+					for i in &def.args {
+						match i {
+							types::DefinitionParam::Type(..) => def_arg_count += 1,
+							types::DefinitionParam::Return(t) => {
+								if return_id != None {
+									return Err(String::from("A function may only have one return value"));
+								}
+								return_id = Some(vtable.alloc(type_table.lookup(&t)?)?);
+							}
+						}
+					}
+
+					if args.len() > def_arg_count {
 						return Err(String::from("Too many arguments"));
-					} else if args.len() < def.args.len() {
+					} else if args.len() < def_arg_count {
 						return Err(String::from("Not enough arguments"));
 					}
 
+					let mut arg_ids = Vec::<u8>::new();
 					let mut index = 0;
-					for i in args {
-						let this_arg = compile_expression(i, env, type_table, vtable, output)?;
-						let expected_type = type_table.lookup(&def.args[index])?;
-						if expected_type != vtable.type_of(this_arg) {
-							eprintln!("WARN: argument type does not match definition");
-						}
 
-						arg_ids.push(this_arg);
-						index += 1;
+					for i in &def.args {
+						match i {
+							types::DefinitionParam::Type(t) => {
+								let this_arg = compile_expression(args[index].clone(), env, type_table, vtable, output)?
+									.ok_or(String::from("Expression has no return value"))?;
+
+								if type_table.lookup(&t)? != vtable.type_of(this_arg) {
+									eprintln!("WARN: argument type does not match definition");
+								}
+
+								arg_ids.push(this_arg);
+								index += 1;
+							}
+							types::DefinitionParam::Return(..) => arg_ids.push(return_id.unwrap()),
+						}
 					}
 					write!(output, "\tdb {}", env.expand(&name)?)
 						.map_err(|err| err.to_string())?;
@@ -390,41 +413,65 @@ fn compile_expression<W: Write>(
 					}
 					writeln!(output, "")
 						.map_err(|err| err.to_string())?;
-					eprintln!("TODO: Function return values are unimplemented");
-					Ok(0)
+
+					Ok(return_id)
 				}
 				types::Definition::Alias(alias) => {
-					let mut arg_ids = Vec::<u8>::new();
-
 					enum AliasVariant {
 						ArgId(usize),
 						ExpressionId(u8),
 					}
-					let mut alias_ids = Vec::<AliasVariant>::new();
 
-					if args.len() > alias.args.len() {
+					let mut def_arg_count = 0;
+					let mut return_id: Option<u8> = None;
+
+					for i in &alias.args {
+						match i {
+							types::DefinitionParam::Type(..) => def_arg_count += 1,
+							types::DefinitionParam::Return(t) => {
+								if return_id != None {
+									return Err(String::from("A function may only have one return value"));
+								}
+								return_id = Some(vtable.alloc(type_table.lookup(&t)?)?);
+							}
+						}
+					}
+
+					if args.len() > def_arg_count {
 						return Err(String::from("Too many arguments"));
-					} else if args.len() < alias.args.len() {
+					} else if args.len() < def_arg_count {
 						return Err(String::from("Not enough arguments"));
 					}
 
+					let mut arg_ids = Vec::<u8>::new();
+					let mut alias_ids = Vec::<AliasVariant>::new();
 					let mut index = 0;
-					for i in args {
-						let this_arg = compile_expression(i, env, type_table, vtable, output)?;
-						let expected_type = type_table.lookup(&alias.args[index])?;
-						if expected_type != vtable.type_of(this_arg) {
-							eprintln!("WARN: argument type does not match definition");
-						}
 
-						arg_ids.push(this_arg);
-						index += 1;
+					for i in &alias.args {
+						match i {
+							types::DefinitionParam::Type(t) => {
+								let this_arg = compile_expression(args[index].clone(), env, type_table, vtable, output)?
+									.ok_or(String::from("Expression has no return value"))?;
+
+								if type_table.lookup(&t)? != vtable.type_of(this_arg) {
+									eprintln!("WARN: argument type does not match definition");
+								}
+
+								arg_ids.push(this_arg);
+								index += 1;
+							}
+							types::DefinitionParam::Return(..) => arg_ids.push(return_id.unwrap()),
+						}
 					}
 
 					for i in &alias.target_args {
 						match i {
 							types::AliasParam::ArgId(index) => alias_ids.push(AliasVariant::ArgId(*index)),
 							types::AliasParam::Expression(rpn) => {
-								alias_ids.push(AliasVariant::ExpressionId(compile_expression(rpn.clone(), env, type_table, vtable, output)?))
+								alias_ids.push(AliasVariant::ExpressionId(
+									compile_expression(rpn.clone(), env, type_table, vtable, output)?
+										.ok_or(String::from("Expression has no return value"))?
+								))
 							}
 						}
 					}
@@ -446,31 +493,51 @@ fn compile_expression<W: Write>(
 					}
 					writeln!(output, "")
 						.map_err(|err| err.to_string())?;
-					eprintln!("TODO: Function return values are unimplemented");
-					Ok(0)
+
+					Ok(return_id)
 				}
 				types::Definition::Macro(mac) => {
-					let mut arg_ids = Vec::<u8>::new();
+					let mut def_arg_count = 0;
+					let mut return_id: Option<u8> = None;
 
-					if args.len() > mac.args.len() && !mac.varargs {
+					for i in &mac.args {
+						match i {
+							types::DefinitionParam::Type(..) => def_arg_count += 1,
+							types::DefinitionParam::Return(t) => {
+								if return_id != None {
+									return Err(String::from("A function may only have one return value"));
+								}
+								return_id = Some(vtable.alloc(type_table.lookup(&t)?)?);
+							}
+						}
+					}
+
+					if args.len() > def_arg_count && !mac.varargs {
 						return Err(String::from("Too many arguments"));
-					} else if args.len() < mac.args.len() {
+					} else if args.len() < def_arg_count {
 						return Err(String::from("Not enough arguments"));
 					}
 
+					let mut arg_ids = Vec::<u8>::new();
 					let mut index = 0;
-					for i in args {
-						let this_arg = compile_expression(i, env, type_table, vtable, output)?;
-						if index < mac.args.len() {
-							let expected_type = type_table.lookup(&mac.args[index])?;
-							if expected_type != vtable.type_of(this_arg) {
-								eprintln!("WARN: argument type does not match definition");
-							}
-						}
 
-						arg_ids.push(this_arg);
-						index += 1;
+					for i in &mac.args {
+						match i {
+							types::DefinitionParam::Type(t) => {
+								let this_arg = compile_expression(args[index].clone(), env, type_table, vtable, output)?
+									.ok_or(String::from("Expression has no return value"))?;
+
+								if type_table.lookup(&t)? != vtable.type_of(this_arg) {
+									eprintln!("WARN: argument type does not match definition");
+								}
+
+								arg_ids.push(this_arg);
+								index += 1;
+							}
+							types::DefinitionParam::Return(..) => arg_ids.push(return_id.unwrap()),
+						}
 					}
+
 					write!(output, "\t{}", mac.target)
 						.map_err(|err| err.to_string())?;
 					for i in arg_ids {
@@ -479,13 +546,14 @@ fn compile_expression<W: Write>(
 					}
 					writeln!(output, "")
 						.map_err(|err| err.to_string())?;
-					eprintln!("TODO: Function return values are unimplemented");
-					Ok(0)
+
+					Ok(return_id)
 				}
 			}
 		}
 		Rpn::Negate(i) => {
-			let operand = compile_expression(*i, env, type_table, vtable, output)?;
+			let operand = compile_expression(*i, env, type_table, vtable, output)?
+				.ok_or(String::from("Expression has no return value"))?;
 			let operand_type = vtable.type_of(operand);
 			let zero = vtable.alloc(operand_type)?;
 			let result = vtable.alloc(operand_type)?;
@@ -494,10 +562,11 @@ fn compile_expression<W: Write>(
 				.map_err(|err| err.to_string())?;
 			writeln!(output, "\tdb {}, {result}, {zero}, {operand}", env.expand(&format!("sub_{operand_type}"))?)
 				.map_err(|err| err.to_string())?;
-			Ok(result)
+			Ok(Some(result))
 		}
 		Rpn::Not(i) => {
-			let operand = compile_expression(*i, env, type_table, vtable, output)?;
+			let operand = compile_expression(*i, env, type_table, vtable, output)?
+				.ok_or(String::from("Expression has no return value"))?;
 			let operand_type = vtable.type_of(operand);
 			// TODO: make the default integer type configurable per-environment
 			let ff = vtable.alloc(operand_type)?;
@@ -506,7 +575,7 @@ fn compile_expression<W: Write>(
 				.map_err(|err| err.to_string())?;
 			writeln!(output, "\tdb {}, {result}, {operand}, {ff}", env.expand(&format!("xor_{operand_type}"))?)
 				.map_err(|err| err.to_string())?;
-			Ok(result)
+			Ok(Some(result))
 		}
 		Rpn::Deref(..) => todo!(),
 		Rpn::Address(..) => todo!(),
@@ -533,10 +602,11 @@ fn compile_expression<W: Write>(
 			let dest = vtable.lookup(&name)?;
 			let dest_type = vtable.type_of(dest);
 			// TODO: make this directly take ownership of i if it is not an Rpn::Variable.
-			let source = compile_expression(*i, env, type_table, vtable, output)?;
+			let source = compile_expression(*i, env, type_table, vtable, output)?
+				.ok_or(String::from("Expression has no return value"))?;
 			writeln!(output, "\tdb {}, {dest}, {source}", env.expand(&format!("mov_{dest_type}"))?)
 				.map_err(|err| err.to_string())?;
-			Ok(dest)
+			Ok(Some(dest))
 		}
 	}
 }
@@ -608,7 +678,6 @@ pub fn compile<W: Write>(ast: Vec<types::Root>, mut output: W) -> Result<(), Str
 
 	let type_table = TypeTable { table: HashMap::<String, Type>::from([
 		(String::from("u8"), Type { signed: false, size: 1 } ),
-		(String::from("i8"), Type { signed: true, size: 1 } ),
 	]) };
 
 	for i in ast {

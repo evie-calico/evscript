@@ -40,16 +40,16 @@ Root: Root = {
 }
 
 Statement: Statement = {
-	"def" <name:Iden> "(" <args:Comma<Iden>> ")" ";" => {
+	"def" <name:Iden> "(" <args:Comma<DefinitionParam>> ")" ";" => {
 		Statement::Definition(name, Definition::Def(Def { args, bytecode: 0 }))
 	},
-	"alias" <name:Iden> "(" <args:Comma<Iden>> ")" "=" <target:Iden> "(" <target_args:Comma<AliasParam>> ")" ";" => {
+	"alias" <name:Iden> "(" <args:Comma<DefinitionParam>> ")" "=" <target:Iden> "(" <target_args:Comma<AliasParam>> ")" ";" => {
 		Statement::Definition(name, Definition::Alias(Alias { args, target, target_args }))
 	},
-	"macro" <name:Iden> "(" <args:Comma<Iden>> ")" "=" <target:Iden> ";" => {
+	"macro" <name:Iden> "(" <args:Comma<DefinitionParam>> ")" "=" <target:Iden> ";" => {
 		Statement::Definition(name, Definition::Macro(Macro { args, target, varargs: false }))
 	},
-	"macro" <name:Iden> "(" <args:Comma<Iden>> "..." ")" "=" <target:Iden> ";" => {
+	"macro" <name:Iden> "(" <args:Comma<DefinitionParam>> "..." ")" "=" <target:Iden> ";" => {
 		Statement::Definition(name, Definition::Macro(Macro { args, target, varargs: true }))
 	},
 	"use" <env:Iden> ";" => Statement::Use(env),
@@ -71,12 +71,17 @@ Statement: Statement = {
 	"yield" ";" => Statement::Expression(Rpn::Call(String::from("yield"), vec![])),
 }
 
+DefinitionParam: DefinitionParam = {
+	"return" <i:Iden> => DefinitionParam::Return(i),
+	Iden => DefinitionParam::Type(<>),
+}
+
 AliasParam: AliasParam = {
 	"$" <i:r"-?[0-9]+"> =>? Ok(AliasParam::ArgId(usize::from_str(i)
 		.map_err(|_| ParseError::User {
 			error: "Argument index is too large"
 		})?)),
-	<expr:Expr> => AliasParam::Expression(expr),
+	Expr => AliasParam::Expression(<>),
 }
 
 IfContainer: Statement = {

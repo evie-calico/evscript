@@ -50,21 +50,27 @@ pub enum Definition {
 pub struct Def {
 	/// The lookup value of this definition.
 	pub bytecode: u8,
-	pub args: Vec<String>,
+	pub args: Vec<DefinitionParam>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Macro {
-	pub args: Vec<String>,
+	pub args: Vec<DefinitionParam>,
 	pub target: String,
 	pub varargs: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct Alias {
-	pub args: Vec<String>,
+	pub args: Vec<DefinitionParam>,
 	pub target: String,
 	pub target_args: Vec<AliasParam>,
+}
+
+#[derive(Debug, Clone)]
+pub enum DefinitionParam {
+	Return(String),
+	Type(String),
 }
 
 #[derive(Debug, Clone)]

@@ -3,7 +3,7 @@
 env script {
 	use std;
 	def memset(ptr, u8, u16);
-	def rand(u8);
+	def rand(return u8);
 	def print(ptr);
 	def say(ptr);
 	def print_wait();
@@ -25,11 +25,11 @@ env npc {
 	use script;
 	macro move(...) = npc_move;
 	macro set_frame(...) = npc_set_frame;
-	alias lock(u8, u8) = npc_lock($2, $1);
+	alias lock() = npc_lock();
 	alias wait() = print_wait();
 	pool = 8;
 }
 
 npc Main {
-	lock(1, 2);
+	u8 i = rand();
 }
