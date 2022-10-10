@@ -31,5 +31,6 @@ env npc {
 }
 
 npc Main {
-	u8 i = rand();
+	repeat 8 {}
+	loop {}
 }

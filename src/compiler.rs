@@ -83,6 +83,9 @@ impl Environment {
 				sign_alias!("land_u8", "land_i8"),
 				define!("lor_u8", 21),
 				sign_alias!("lor_u8", "lor_i8"),
+				define!("goto", 22),
+				define!("goto_if_true", 23),
+				define!("goto_if_false", 24),
 			]),
 			pool: 0,
 		}
@@ -615,6 +618,7 @@ fn compile_statement<W: Write>(
 	statement: types::Statement,
 	env: &Environment,
 	type_table: &TypeTable,
+	label_index: &mut u32,
 	vtable: &mut VariableTable,
 	output: &mut W
 ) -> Result<(), String> {
@@ -633,12 +637,192 @@ fn compile_statement<W: Write>(
 			// Compile the Set.
 			compile_expression(rpn, env, type_table, vtable, output)?;
 		},
-		types::Statement::If(..) => todo!(),
-		types::Statement::While(..) => todo!(),
-		types::Statement::Do(..) => todo!(),
-		types::Statement::For(..) => todo!(),
-		types::Statement::Repeat(..) => todo!(),
-		types::Statement::Loop(..) => todo!(),
+		types::Statement::If(condition, contents, else_contents) => {
+			let condition_result = compile_expression(condition, env, type_table, vtable, output)?
+				.ok_or(String::from("Expression has no return value"))?;
+			let l = *label_index;
+			*label_index += 1;
+
+			writeln!(
+				output,
+				"\tdb {}, {condition_result}, LOW(.__else{l}), HIGH(.__else{l})",
+				env.expand("goto_if_false")?
+			).map_err(|err| err.to_string())?;
+
+			for i in contents {
+				compile_statement(i, env, type_table, label_index, vtable, output)?;
+			}
+
+			if let Some(..) = else_contents {
+				writeln!(
+					output,
+					"\tdb {}, LOW(.__end{l}), HIGH(.__end{l})",
+					env.expand("goto")?
+				).map_err(|err| err.to_string())?;
+			}
+
+			writeln!(output, ".__else{l}").map_err(|err| err.to_string())?;
+
+			if let Some(else_statements) = else_contents {
+				for i in else_statements {
+					compile_statement(i, env, type_table, label_index, vtable, output)?;
+				}
+			}
+
+			writeln!(output, ".__end{l}").map_err(|err| err.to_string())?;
+		}
+		types::Statement::While(condition, contents) => {
+			let l = *label_index;
+			*label_index += 1;
+
+			// Jump to the condition first.
+			writeln!(
+				output,
+				"\tdb {}, LOW(.__end{l}), HIGH(.__end{l})",
+				env.expand("goto")?
+			).map_err(|err| err.to_string())?;
+
+			writeln!(output, ".__while{l}").map_err(|err| err.to_string())?;
+
+			for i in contents {
+				compile_statement(i, env, type_table, label_index, vtable, output)?;
+			}
+			
+			writeln!(output, ".__end{l}").map_err(|err| err.to_string())?;
+
+			let condition_result = compile_expression(condition, env, type_table, vtable, output)?
+				.ok_or(String::from("Expression has no return value"))?;
+
+			writeln!(
+				output,
+				"\tdb {}, {condition_result}, LOW(.__while{l}), HIGH(.__while{l})",
+				env.expand("goto_if_true")?
+			).map_err(|err| err.to_string())?;
+		}
+		types::Statement::Do(condition, contents) => {
+			let l = *label_index;
+			*label_index += 1;
+
+			writeln!(output, ".__while{l}").map_err(|err| err.to_string())?;
+
+			for i in contents {
+				compile_statement(i, env, type_table, label_index, vtable, output)?;
+			}
+			
+			writeln!(output, ".__end{l}").map_err(|err| err.to_string())?;
+
+			let condition_result = compile_expression(condition, env, type_table, vtable, output)?
+				.ok_or(String::from("Expression has no return value"))?;
+
+			writeln!(
+				output,
+				"\tdb {}, {condition_result}, LOW(.__while{l}), HIGH(.__while{l})",
+				env.expand("goto_if_true")?
+			).map_err(|err| err.to_string())?;
+		}
+		types::Statement::For(prologue, condition, epilogue, contents) => {
+			let l = *label_index;
+			*label_index += 1;
+
+			// Execute prologue
+			compile_statement(*prologue, env, type_table, label_index, vtable, output)?;
+
+			// Jump to the condition first.
+			writeln!(
+				output,
+				"\tdb {}, LOW(.__end{l}), HIGH(.__end{l})",
+				env.expand("goto")?
+			).map_err(|err| err.to_string())?;
+
+			writeln!(output, ".__for{l}").map_err(|err| err.to_string())?;
+
+			for i in contents {
+				compile_statement(i, env, type_table, label_index, vtable, output)?;
+			}
+
+			// Execute epliogue before checking condition
+			compile_statement(*epilogue, env, type_table, label_index, vtable, output)?;
+			
+			writeln!(output, ".__end{l}").map_err(|err| err.to_string())?;
+
+			let condition_result = compile_expression(condition, env, type_table, vtable, output)?
+				.ok_or(String::from("Expression has no return value"))?;
+
+			writeln!(
+				output,
+				"\tdb {}, {condition_result}, LOW(.__for{l}), HIGH(.__for{l})",
+				env.expand("goto_if_true")?
+			).map_err(|err| err.to_string())?;
+		}
+		types::Statement::Repeat(index_name, repeat_count, contents) => {
+			let l = *label_index;
+			*label_index += 1;
+
+			// Execute prologue
+			let repeat_index = compile_expression(repeat_count, env, type_table, vtable, output)?
+				.ok_or(String::from("Expression has no return value"))?;
+
+			*vtable.name_of(repeat_index) = index_name;
+
+			writeln!(output, ".__repeat{l}").map_err(|err| err.to_string())?;
+
+			for i in contents {
+				compile_statement(i, env, type_table, label_index, vtable, output)?;
+			}
+
+			// Execute epilogue before checking condition
+			let scratch = vtable.alloc(Type { signed: false, size: 1 })?;
+
+			writeln!(
+				output,
+				"\tdb {}, {scratch}, 1",
+				env.expand("put_u8")?
+			).map_err(|err| err.to_string())?;
+
+			writeln!(
+				output,
+				"\tdb {}, {repeat_index}, {repeat_index}, {scratch}",
+				env.expand("sub_u8")?
+			).map_err(|err| err.to_string())?;
+			
+			writeln!(output, ".__end{l}").map_err(|err| err.to_string())?;
+
+			writeln!(
+				output,
+				"\tdb {}, {scratch}, 0",
+				env.expand("put_u8")?
+			).map_err(|err| err.to_string())?;
+
+			writeln!(
+				output,
+				"\tdb {}, {scratch}, {repeat_index}, {scratch}",
+				env.expand("equ_u8")?
+			).map_err(|err| err.to_string())?;
+
+			writeln!(
+				output,
+				"\tdb {}, {scratch}, LOW(.__repeat{l}), HIGH(.__repeat{l})",
+				env.expand("goto_if_false")?
+			).map_err(|err| err.to_string())?;
+		}
+		types::Statement::Loop(contents) => {
+			let l = *label_index;
+			*label_index += 1;
+
+			writeln!(output, ".__loop{l}").map_err(|err| err.to_string())?;
+
+			for i in contents {
+				compile_statement(i, env, type_table, label_index, vtable, output)?;
+			}
+
+			writeln!(
+				output,
+				"\tdb {}, LOW(.__loop{l}), HIGH(.__loop{l})",
+				env.expand("goto")?
+			).map_err(|err| err.to_string())?;
+			
+			writeln!(output, ".__end{l}").map_err(|err| err.to_string())?;
+		}
 		_ => return Err(format!("{statement:?} not allowed in function")),
 	};
 
@@ -657,12 +841,13 @@ fn compile_function<W: Write>(
 		None => return Err(format!("Environment {} does not exist", func.environment)),
 	};
 	let mut vtable = VariableTable::new();
+	let mut label_index = 0;
 
 	writeln!(output, "\nsection \"{name} evscript fn\", romx\n{name}::")
 		.map_err(|err| err.to_string())?;
 
 	for i in func.contents {
-		compile_statement(i, env, type_table, &mut vtable, output)?;
+		compile_statement(i, env, type_table, &mut label_index, &mut vtable, output)?;
 	}
 
 	writeln!(output, "\tdb 0")
