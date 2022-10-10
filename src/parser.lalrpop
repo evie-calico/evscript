@@ -65,10 +65,7 @@ Statement: Statement = {
 		Statement::Definition(name, Definition::Alias(Alias { args, target, target_args }))
 	},
 	"macro" <name:Iden> "(" <args:Comma<DefinitionParam>> ")" "=" <target:Iden> ";" => {
-		Statement::Definition(name, Definition::Macro(Macro { args, target, varargs: false }))
-	},
-	"macro" <name:Iden> "(" <args:Comma<DefinitionParam>> "..." ")" "=" <target:Iden> ";" => {
-		Statement::Definition(name, Definition::Macro(Macro { args, target, varargs: true }))
+		Statement::Definition(name, Definition::Macro(Macro { args, target }))
 	},
 	"use" <env:Iden> ";" => Statement::Use(env),
 	"pool" "=" <expr:Expr> ";" => Statement::Pool(expr),

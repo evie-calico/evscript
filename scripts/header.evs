@@ -2,10 +2,10 @@
 
 env script {
 	use std;
-	def memset(ptr, u8, u16);
+	def memset(u16, u8, u16);
 	def rand(return u8);
-	def print(ptr);
-	def say(ptr);
+	def print(u16);
+	def say(u16);
 	def print_wait();
 	def get_flag(u8, u8);
 	def map_put_tile(u8, u8, u8);
@@ -23,8 +23,8 @@ env script {
 
 env npc {
 	use script;
-	macro move(...) = npc_move;
-	macro set_frame(...) = npc_set_frame;
+	macro move(u16, u8, u8) = npc_move;
+	macro set_frame(u16, u8) = npc_set_frame;
 	alias lock() = npc_lock();
 	alias wait() = print_wait();
 	pool = 8;

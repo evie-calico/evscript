@@ -57,7 +57,6 @@ pub struct Def {
 pub struct Macro {
 	pub args: Vec<DefinitionParam>,
 	pub target: String,
-	pub varargs: bool,
 }
 
 #[derive(Debug, Clone)]

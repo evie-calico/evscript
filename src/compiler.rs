@@ -289,12 +289,10 @@ fn compile_environment<W: Write>(
 				if compiled_env.definitions.get(&name).is_some() {
 					eprintln!("WARN: duplicate definition of {name}");
 				}
-
-					writeln!(output, "def {this_name}@{name} equ {bytecode_index}")
-						.map_err(|err| err.to_string())?;
-
 					match def {
 						types::Definition::Def(ref mut sub_def) => {
+							writeln!(output, "def {this_name}@{name} equ {bytecode_index}")
+								.map_err(|err| err.to_string())?;
 							sub_def.bytecode = bytecode_index;
 							bytecode_index = bytecode_index.checked_add(1)
 								.ok_or(format!("Hit bytecode limit in environment {this_name}"))?;
@@ -328,6 +326,7 @@ fn compile_expression<W: Write>(
 	env: &Environment,
 	type_table: &TypeTable,
 	vtable: &mut VariableTable,
+	str_table: &mut Vec<String>,
 	output: &mut W
 ) -> Result<Option<u8>, String> {
 	fn binary_operation<W: Write>(
@@ -337,11 +336,12 @@ fn compile_expression<W: Write>(
 		env: &Environment,
 		type_table: &TypeTable,
 		vtable: & mut VariableTable,
+		str_table: &mut Vec<String>,
 		output: &mut W
 	) -> Result<Option<u8>, String> {
-		let l = compile_expression(*l, env, type_table, vtable, output)?
+		let l = compile_expression(*l, env, type_table, vtable, str_table, output)?
 			.ok_or(String::from("Expression has no return value"))?;
-		let r = compile_expression(*r, env, type_table, vtable, output)?
+		let r = compile_expression(*r, env, type_table, vtable, str_table, output)?
 			.ok_or(String::from("Expression has no return value"))?;
 
 		let result_type = Type::from(vtable.type_of(l), vtable.type_of(r));
@@ -379,7 +379,18 @@ fn compile_expression<W: Write>(
 				.map_err(|err| err.to_string())?;
 			Ok(Some(result))
 		}
-		Rpn::String(..) => todo!(),
+		Rpn::String(string) => {
+			let result_type = Type { signed: false, size: 2 };
+			let result = vtable.alloc(result_type)?;
+			let value = format!(".__string{}", str_table.len());
+			// TODO: make this a 16-bit put
+			writeln!(output, "\tdb {}, {result}, LOW({value})", env.expand(&format!("put_u8"))?)
+				.map_err(|err| err.to_string())?;
+			writeln!(output, "\tdb {}, {result} + 1, HIGH({value})", env.expand(&format!("put_u8"))?)
+				.map_err(|err| err.to_string())?;
+			str_table.push(string);
+			Ok(Some(result))
+		}
 		Rpn::Call(name, args) => {
 			match env.lookup(&name)? {
 				types::Definition::Def(def) => {
@@ -410,7 +421,7 @@ fn compile_expression<W: Write>(
 					for i in &def.args {
 						match i {
 							types::DefinitionParam::Type(t) => {
-								let this_arg = compile_expression(args[index].clone(), env, type_table, vtable, output)?
+								let this_arg = compile_expression(args[index].clone(), env, type_table, vtable, str_table, output)?
 									.ok_or(String::from("Expression has no return value"))?;
 
 								if type_table.lookup(&t)? != vtable.type_of(this_arg) {
@@ -468,7 +479,7 @@ fn compile_expression<W: Write>(
 					for i in &alias.args {
 						match i {
 							types::DefinitionParam::Type(t) => {
-								let this_arg = compile_expression(args[index].clone(), env, type_table, vtable, output)?
+								let this_arg = compile_expression(args[index].clone(), env, type_table, vtable, str_table, output)?
 									.ok_or(String::from("Expression has no return value"))?;
 
 								if type_table.lookup(&t)? != vtable.type_of(this_arg) {
@@ -487,7 +498,7 @@ fn compile_expression<W: Write>(
 							types::AliasParam::ArgId(index) => alias_ids.push(AliasVariant::ArgId(*index)),
 							types::AliasParam::Expression(rpn) => {
 								alias_ids.push(AliasVariant::ExpressionId(
-									compile_expression(rpn.clone(), env, type_table, vtable, output)?
+									compile_expression(rpn.clone(), env, type_table, vtable, str_table, output)?
 										.ok_or(String::from("Expression has no return value"))?
 								))
 							}
@@ -530,7 +541,7 @@ fn compile_expression<W: Write>(
 						}
 					}
 
-					if args.len() > def_arg_count && !mac.varargs {
+					if args.len() > def_arg_count {
 						return Err(String::from("Too many arguments"));
 					} else if args.len() < def_arg_count {
 						return Err(String::from("Not enough arguments"));
@@ -542,7 +553,7 @@ fn compile_expression<W: Write>(
 					for i in &mac.args {
 						match i {
 							types::DefinitionParam::Type(t) => {
-								let this_arg = compile_expression(args[index].clone(), env, type_table, vtable, output)?
+								let this_arg = compile_expression(args[index].clone(), env, type_table, vtable, str_table, output)?
 									.ok_or(String::from("Expression has no return value"))?;
 
 								if type_table.lookup(&t)? != vtable.type_of(this_arg) {
@@ -570,7 +581,7 @@ fn compile_expression<W: Write>(
 			}
 		}
 		Rpn::Negate(i) => {
-			let operand = compile_expression(*i, env, type_table, vtable, output)?
+			let operand = compile_expression(*i, env, type_table, vtable, str_table, output)?
 				.ok_or(String::from("Expression has no return value"))?;
 			let operand_type = vtable.type_of(operand);
 			let zero = vtable.alloc(operand_type)?;
@@ -583,7 +594,7 @@ fn compile_expression<W: Write>(
 			Ok(Some(result))
 		}
 		Rpn::Not(i) => {
-			let operand = compile_expression(*i, env, type_table, vtable, output)?
+			let operand = compile_expression(*i, env, type_table, vtable, str_table, output)?
 				.ok_or(String::from("Expression has no return value"))?;
 			let operand_type = vtable.type_of(operand);
 			// TODO: make the default integer type configurable per-environment
@@ -597,30 +608,30 @@ fn compile_expression<W: Write>(
 		}
 		Rpn::Deref(..) => todo!(),
 		Rpn::Address(..) => todo!(),
-		Rpn::Mul(l, r) => binary_operation(l, "mul", r, env, type_table, vtable, output),
-		Rpn::Div(l, r) => binary_operation(l, "div", r, env, type_table, vtable, output),
-		Rpn::Mod(l, r) => binary_operation(l, "mod", r, env, type_table, vtable, output),
-		Rpn::Add(l, r) => binary_operation(l, "add", r, env, type_table, vtable, output),
-		Rpn::Sub(l, r) => binary_operation(l, "sub", r, env, type_table, vtable, output),
-		Rpn::ShiftLeft(l, r) => binary_operation(l, "shl", r, env, type_table, vtable, output),
-		Rpn::ShiftRight(l, r) => binary_operation(l, "shr", r, env, type_table, vtable, output),
-		Rpn::BinaryAnd(l, r) => binary_operation(l, "band", r, env, type_table, vtable, output),
-		Rpn::BinaryXor(l, r) => binary_operation(l, "bxor", r, env, type_table, vtable, output),
-		Rpn::BinaryOr(l, r) => binary_operation(l, "bor", r, env, type_table, vtable, output),
-		Rpn::Equ(l, r) => binary_operation(l, "equ", r, env, type_table, vtable, output),
-		Rpn::NotEqu(l, r) => binary_operation(l, "nequ", r, env, type_table, vtable, output),
-		Rpn::LessThan(l, r) => binary_operation(l, "lt", r, env, type_table, vtable, output),
-		Rpn::GreaterThan(l, r) => binary_operation(l, "gt", r, env, type_table, vtable, output),
-		Rpn::LessThanEqu(l, r) => binary_operation(l, "lte", r, env, type_table, vtable, output),
-		Rpn::GreaterThanEqu(l, r) => binary_operation(l, "gte", r, env, type_table, vtable, output),
-		Rpn::LogicalAnd(l, r) => binary_operation(l, "land", r, env, type_table, vtable, output),
-		Rpn::LogicalOr(l, r) => binary_operation(l, "lor", r, env, type_table, vtable, output),
+		Rpn::Mul(l, r) => binary_operation(l, "mul", r, env, type_table, vtable, str_table, output),
+		Rpn::Div(l, r) => binary_operation(l, "div", r, env, type_table, vtable, str_table, output),
+		Rpn::Mod(l, r) => binary_operation(l, "mod", r, env, type_table, vtable, str_table, output),
+		Rpn::Add(l, r) => binary_operation(l, "add", r, env, type_table, vtable, str_table, output),
+		Rpn::Sub(l, r) => binary_operation(l, "sub", r, env, type_table, vtable, str_table, output),
+		Rpn::ShiftLeft(l, r) => binary_operation(l, "shl", r, env, type_table, vtable, str_table, output),
+		Rpn::ShiftRight(l, r) => binary_operation(l, "shr", r, env, type_table, vtable, str_table, output),
+		Rpn::BinaryAnd(l, r) => binary_operation(l, "band", r, env, type_table, vtable, str_table, output),
+		Rpn::BinaryXor(l, r) => binary_operation(l, "bxor", r, env, type_table, vtable, str_table, output),
+		Rpn::BinaryOr(l, r) => binary_operation(l, "bor", r, env, type_table, vtable, str_table, output),
+		Rpn::Equ(l, r) => binary_operation(l, "equ", r, env, type_table, vtable, str_table, output),
+		Rpn::NotEqu(l, r) => binary_operation(l, "nequ", r, env, type_table, vtable, str_table, output),
+		Rpn::LessThan(l, r) => binary_operation(l, "lt", r, env, type_table, vtable, str_table, output),
+		Rpn::GreaterThan(l, r) => binary_operation(l, "gt", r, env, type_table, vtable, str_table, output),
+		Rpn::LessThanEqu(l, r) => binary_operation(l, "lte", r, env, type_table, vtable, str_table, output),
+		Rpn::GreaterThanEqu(l, r) => binary_operation(l, "gte", r, env, type_table, vtable, str_table, output),
+		Rpn::LogicalAnd(l, r) => binary_operation(l, "land", r, env, type_table, vtable, str_table, output),
+		Rpn::LogicalOr(l, r) => binary_operation(l, "lor", r, env, type_table, vtable, str_table, output),
 		Rpn::Set(name, i) => {
 			// A plain Set may only assign to existing variables.
 			let dest = vtable.lookup(&name)?;
 			let dest_type = vtable.type_of(dest);
 			// TODO: make this directly take ownership of i if it is not an Rpn::Variable.
-			let source = compile_expression(*i, env, type_table, vtable, output)?
+			let source = compile_expression(*i, env, type_table, vtable, str_table, output)?
 				.ok_or(String::from("Expression has no return value"))?;
 			writeln!(output, "\tdb {}, {dest}, {source}", env.expand(&format!("mov_{dest_type}"))?)
 				.map_err(|err| err.to_string())?;
@@ -635,11 +646,12 @@ fn compile_statement<W: Write>(
 	type_table: &TypeTable,
 	label_index: &mut u32,
 	vtable: &mut VariableTable,
+	str_table: &mut Vec<String>,
 	output: &mut W
 ) -> Result<(), String> {
 	match statement {
 		types::Statement::Expression(rpn) => {
-			compile_expression(rpn, env, type_table, vtable, output)?;
+			compile_expression(rpn, env, type_table, vtable, str_table, output)?;
 		}
 		types::Statement::Declaration(t, name) => {
 			let new_var = vtable.alloc(type_table.lookup(&t)?)?;
@@ -650,10 +662,10 @@ fn compile_statement<W: Write>(
 			let new_var = vtable.alloc(type_table.lookup(&t)?)?;
 			*vtable.name_of(new_var) = Some(name.clone());
 			// Compile the Set.
-			compile_expression(rpn, env, type_table, vtable, output)?;
+			compile_expression(rpn, env, type_table, vtable, str_table, output)?;
 		},
 		types::Statement::If(condition, contents, else_contents) => {
-			let condition_result = compile_expression(condition, env, type_table, vtable, output)?
+			let condition_result = compile_expression(condition, env, type_table, vtable, str_table, output)?
 				.ok_or(String::from("Expression has no return value"))?;
 			let l = *label_index;
 			*label_index += 1;
@@ -665,7 +677,7 @@ fn compile_statement<W: Write>(
 			).map_err(|err| err.to_string())?;
 
 			for i in contents {
-				compile_statement(i, env, type_table, label_index, vtable, output)?;
+				compile_statement(i, env, type_table, label_index, vtable, str_table, output)?;
 			}
 
 			if let Some(..) = else_contents {
@@ -680,7 +692,7 @@ fn compile_statement<W: Write>(
 
 			if let Some(else_statements) = else_contents {
 				for i in else_statements {
-					compile_statement(i, env, type_table, label_index, vtable, output)?;
+					compile_statement(i, env, type_table, label_index, vtable, str_table, output)?;
 				}
 			}
 
@@ -700,12 +712,12 @@ fn compile_statement<W: Write>(
 			writeln!(output, ".__while{l}").map_err(|err| err.to_string())?;
 
 			for i in contents {
-				compile_statement(i, env, type_table, label_index, vtable, output)?;
+				compile_statement(i, env, type_table, label_index, vtable, str_table, output)?;
 			}
 			
 			writeln!(output, ".__end{l}").map_err(|err| err.to_string())?;
 
-			let condition_result = compile_expression(condition, env, type_table, vtable, output)?
+			let condition_result = compile_expression(condition, env, type_table, vtable, str_table, output)?
 				.ok_or(String::from("Expression has no return value"))?;
 
 			writeln!(
@@ -721,12 +733,12 @@ fn compile_statement<W: Write>(
 			writeln!(output, ".__while{l}").map_err(|err| err.to_string())?;
 
 			for i in contents {
-				compile_statement(i, env, type_table, label_index, vtable, output)?;
+				compile_statement(i, env, type_table, label_index, vtable, str_table, output)?;
 			}
 			
 			writeln!(output, ".__end{l}").map_err(|err| err.to_string())?;
 
-			let condition_result = compile_expression(condition, env, type_table, vtable, output)?
+			let condition_result = compile_expression(condition, env, type_table, vtable, str_table, output)?
 				.ok_or(String::from("Expression has no return value"))?;
 
 			writeln!(
@@ -740,7 +752,7 @@ fn compile_statement<W: Write>(
 			*label_index += 1;
 
 			// Execute prologue
-			compile_statement(*prologue, env, type_table, label_index, vtable, output)?;
+			compile_statement(*prologue, env, type_table, label_index, vtable, str_table, output)?;
 
 			// Jump to the condition first.
 			writeln!(
@@ -752,15 +764,15 @@ fn compile_statement<W: Write>(
 			writeln!(output, ".__for{l}").map_err(|err| err.to_string())?;
 
 			for i in contents {
-				compile_statement(i, env, type_table, label_index, vtable, output)?;
+				compile_statement(i, env, type_table, label_index, vtable, str_table, output)?;
 			}
 
 			// Execute epliogue before checking condition
-			compile_statement(*epilogue, env, type_table, label_index, vtable, output)?;
+			compile_statement(*epilogue, env, type_table, label_index, vtable, str_table, output)?;
 			
 			writeln!(output, ".__end{l}").map_err(|err| err.to_string())?;
 
-			let condition_result = compile_expression(condition, env, type_table, vtable, output)?
+			let condition_result = compile_expression(condition, env, type_table, vtable, str_table, output)?
 				.ok_or(String::from("Expression has no return value"))?;
 
 			writeln!(
@@ -774,13 +786,13 @@ fn compile_statement<W: Write>(
 			*label_index += 1;
 
 			// Execute prologue
-			let repeat_index = compile_expression(repeat_count, env, type_table, vtable, output)?
+			let repeat_index = compile_expression(repeat_count, env, type_table, vtable, str_table, output)?
 				.ok_or(String::from("Expression has no return value"))?;
 
 			writeln!(output, ".__repeat{l}").map_err(|err| err.to_string())?;
 
 			for i in contents {
-				compile_statement(i, env, type_table, label_index, vtable, output)?;
+				compile_statement(i, env, type_table, label_index, vtable, str_table, output)?;
 			}
 
 			// Execute epilogue before checking condition
@@ -825,7 +837,7 @@ fn compile_statement<W: Write>(
 			writeln!(output, ".__loop{l}").map_err(|err| err.to_string())?;
 
 			for i in contents {
-				compile_statement(i, env, type_table, label_index, vtable, output)?;
+				compile_statement(i, env, type_table, label_index, vtable, str_table, output)?;
 			}
 
 			writeln!(
@@ -854,17 +866,25 @@ fn compile_function<W: Write>(
 		None => return Err(format!("Environment {} does not exist", func.environment)),
 	};
 	let mut vtable = VariableTable::new();
+	let mut str_table = Vec::<String>::new();
 	let mut label_index = 0;
 
 	writeln!(output, "\nsection \"{name} evscript fn\", romx\n{name}::")
 		.map_err(|err| err.to_string())?;
 
 	for i in func.contents {
-		compile_statement(i, env, type_table, &mut label_index, &mut vtable, output)?;
+		compile_statement(i, env, type_table, &mut label_index, &mut vtable, &mut str_table, output)?;
 	}
 
 	writeln!(output, "\tdb 0")
 		.map_err(|err| err.to_string())?;
+
+	let mut i = 0;
+	while i < str_table.len() {
+		writeln!(output, ".__string{i} db \"{}\", 0", str_table[i])
+			.map_err(|err| err.to_string())?;
+		i += 1;
+	}
 
 	Ok(())
 }
