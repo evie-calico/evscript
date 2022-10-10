@@ -24,7 +24,7 @@ fn main() {
 			}
 		};
 
-		let output = match File::create("target/out.asm") {
+		let mut output = match File::create("target/out.asm") {
 			Ok(f) => f,
 			Err(err) => {
 				eprintln!("Failed to open out.asm: {err}");
@@ -32,7 +32,7 @@ fn main() {
 			}
 		};
 
-		if let Err(err) = evscript::compiler::compile(ast, output) {
+		if let Err(err) = evscript::compiler::compile(ast, &mut output) {
 			eprintln!("{path}: {err}");
 			exit(1);
 		}

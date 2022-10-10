@@ -1,6 +1,8 @@
 use crate::types::*;
 use lalrpop_util::ParseError;
 
+use std::collections::VecDeque;
+use std::io::Read;
 use std::str::FromStr;
 
 grammar;
@@ -35,7 +37,23 @@ Root: Root = {
 	"env" <name:Iden> "{" <contents:Statement*> "}" => {
 		Root::Environment( name, Environment { contents } )
 	},
-	r"#asm[^#]*#end" => Root::Assembly(String::from(<>)),
+	r"#asm[^#]*#end" =>? {
+		let mut bytes = <>.bytes().collect::<VecDeque<u8>>();
+		bytes.pop_front();
+		bytes.pop_front();
+		bytes.pop_front();
+		bytes.pop_front();
+		bytes.pop_back();
+		bytes.pop_back();
+		bytes.pop_back();
+		bytes.pop_back();
+		let mut result = String::new();
+		bytes.read_to_string(&mut result)
+			.map_err(|err| ParseError::User {
+				error: "Invalid UTF8"
+			})?;
+		Ok(Root::Assembly(result))
+	},
 	"include" <path:String> ";" => Root::Include(path),
 }
 
@@ -63,8 +81,7 @@ Statement: Statement = {
 	"while" <cond:Expr> "{" <contents:Statement*> "}" => Statement::While(cond, contents),
 	"do" "{" <contents:Statement*> "}" "while" <cond:Expr> ";" => Statement::Do(cond, contents),
 	"for" <pro:Statement> <cond:Expr> ";" <epi:Statement> "{" <contents:Statement*> "}" => Statement::For(Box::new(pro), cond, Box::new(epi), contents),
-	"repeat" <cond:Expr> "{" <contents:Statement*> "}" => Statement::Repeat(None, cond, contents),
-	"repeat" <name:Iden> "," <cond:Expr> "{" <contents:Statement*> "}" => Statement::Repeat(Some(name), cond, contents),
+	"repeat" <cond:Expr> "{" <contents:Statement*> "}" => Statement::Repeat(cond, contents),
 	"loop" "{" <contents:Statement*> "}" => Statement::Loop(contents),
 
 	"return" ";" => Statement::Expression(Rpn::Call(String::from("return"), vec![])),
@@ -194,7 +211,17 @@ Iden: String = {
 };
 
 String: String = {
-	r#""([^"]|\.)*""# => String::from(<>),
+	r#""([^"]|\.)*""# =>? {
+		let mut bytes = <>.bytes().collect::<VecDeque<u8>>();
+		bytes.pop_front();
+		bytes.pop_back();
+		let mut result = String::new();
+		bytes.read_to_string(&mut result)
+			.map_err(|err| ParseError::User {
+				error: "Invalid UTF8"
+			})?;
+		Ok(result)
+	},
 }
 
 Comma<T>: Vec<T> = {

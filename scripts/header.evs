@@ -1,4 +1,4 @@
-//#asm include "script.inc" #end
+#asm include "script.inc" #end
 
 env script {
 	use std;
@@ -9,7 +9,7 @@ env script {
 	def print_wait();
 	def get_flag(u8, u8);
 	def map_put_tile(u8, u8, u8);
-	def map_get_tile(u8, u8, u8);
+	def map_get_tile(u8, u8, return u8);
 	def step_direction(u8, u8, u8);
 	def draw_sprite(u8);
 	def npc_move(u8, u16, u16);
@@ -28,9 +28,4 @@ env npc {
 	alias lock() = npc_lock();
 	alias wait() = print_wait();
 	pool = 8;
-}
-
-npc Main {
-	repeat 8 {}
-	loop {}
 }

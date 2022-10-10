@@ -14,7 +14,7 @@ pub enum Statement {
 	While(Rpn, Vec<Statement>),
 	Do(Rpn, Vec<Statement>),
 	For(Box<Statement>, Rpn, Box<Statement>, Vec<Statement>),
-	Repeat(Option<String>, Rpn, Vec<Statement>),
+	Repeat(Rpn, Vec<Statement>),
 	Loop(Vec<Statement>),
 }
 

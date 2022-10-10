@@ -3,7 +3,9 @@ use crate::types::Rpn;
 
 use std::collections::HashMap;
 use std::fmt;
+use std::fs::read_to_string;
 use std::io::Write;
+use std::process::exit;
 
 #[derive(Debug)]
 struct Environment {
@@ -216,7 +218,7 @@ impl VariableTable {
 			}
 		}
 
-		Err(format!("Variable {name} does not exist"))
+		Err(format!("Variable {name} does not exist in {self:#?}"))
 	}
 
 	fn name_of(&mut self, i: u8) -> &mut Option<String> {
@@ -352,11 +354,24 @@ fn compile_expression<W: Write>(
 	}
 
 	match rpn {
-		Rpn::Variable(name) => Ok(Some(vtable.lookup(&name)?)),
+		Rpn::Variable(name) => {
+			match vtable.lookup(&name) {
+				Ok(i) => Ok(Some(i)),
+				Err(..) => {
+					// TODO: make the default integer type configurable
+					let result_type = Type { signed: false, size: 1 };
+					let result = vtable.alloc(result_type)?;
+					// put (result), value
+					writeln!(output, "\tdb {}, {result}, {name}", env.expand(&format!("put_{result_type}"))?)
+						.map_err(|err| err.to_string())?;
+					Ok(Some(result))
+				}
+			}
+		}
 		Rpn::Signed(value) => {
 			// The "default" type of an integer is u8 (think C's int)
 			// This is because most projects will probably only have the 8-bit bytecode installed.
-			// TODO: make the default integer type configurable per-environment
+			// TODO: make the default integer type configurable
 			let result_type = Type { signed: false, size: 1 };
 			let result = vtable.alloc(result_type)?;
 			// put (result), value
@@ -754,15 +769,13 @@ fn compile_statement<W: Write>(
 				env.expand("goto_if_true")?
 			).map_err(|err| err.to_string())?;
 		}
-		types::Statement::Repeat(index_name, repeat_count, contents) => {
+		types::Statement::Repeat(repeat_count, contents) => {
 			let l = *label_index;
 			*label_index += 1;
 
 			// Execute prologue
 			let repeat_index = compile_expression(repeat_count, env, type_table, vtable, output)?
 				.ok_or(String::from("Expression has no return value"))?;
-
-			*vtable.name_of(repeat_index) = index_name;
 
 			writeln!(output, ".__repeat{l}").map_err(|err| err.to_string())?;
 
@@ -856,28 +869,61 @@ fn compile_function<W: Write>(
 	Ok(())
 }
 
-pub fn compile<W: Write>(ast: Vec<types::Root>, mut output: W) -> Result<(), String> {
-	let mut environment_table = EnvironmentTable::from([
-		(String::from("std"), Environment::std()),
-	]);
-
-	let type_table = TypeTable { table: HashMap::<String, Type>::from([
-		(String::from("u8"), Type { signed: false, size: 1 } ),
-	]) };
-
+fn compile_ast<W: Write>(
+	ast: Vec<types::Root>,
+	environment_table: &mut EnvironmentTable,
+	type_table: &mut TypeTable,
+	output: &mut W
+) -> Result<(), String> {
 	for i in ast {
 		match i {
 			types::Root::Environment(name, env) => {
-				let new_env = compile_environment(&name, env, &environment_table, &mut output)?;
+				let new_env = compile_environment(&name, env, &environment_table, output)?;
 				environment_table.insert(name, new_env);
 			}
 			types::Root::Function(name, func) => {
-				compile_function(&name, func, &environment_table, &type_table, &mut output)?;
+				compile_function(&name, func, &environment_table, &type_table, output)?;
 			}
-			types::Root::Assembly(..) => todo!(),
-			types::Root::Include(..) => todo!(),
+			types::Root::Assembly(contents) => {
+				writeln!(output, "{}", contents).map_err(|err| err.to_string())?;
+			}
+			types::Root::Include(path) => {
+				let input = &match read_to_string(&path) {
+					Ok(input) => input,
+					Err(err) => {
+						eprintln!("{path}: {err}");
+						exit(1);
+					}
+				};
+
+				let ast = match crate::parse(input) {
+					Ok(ast) => ast,
+					Err(err) => {
+						eprintln!("{path}: {err}");
+						exit(1);
+					}
+				};
+
+				if let Err(err) = compile_ast(ast, environment_table, type_table, output) {
+					eprintln!("{path}: {err}");
+					exit(1);
+				}
+			}
 		}
 	}
 
 	Ok(())
+}
+
+pub fn compile<W: Write>(ast: Vec<types::Root>, output: &mut W) -> Result<(), String> {
+	let mut environment_table = EnvironmentTable::from([
+		(String::from("std"), Environment::std()),
+	]);
+
+	let mut type_table = TypeTable { table: HashMap::<String, Type>::from([
+		(String::from("u8"), Type { signed: false, size: 1 } ),
+		(String::from("u16"), Type { signed: false, size: 2 } ),
+	]) };
+
+	compile_ast(ast, &mut environment_table, &mut type_table, output)
 }

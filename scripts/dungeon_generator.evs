@@ -1,4 +1,4 @@
-include "../include/script.evs";
+include "scripts/header.evs";
 #asm
 	include "defines.inc"
 	include "dungeon.inc"

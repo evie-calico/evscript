@@ -1,8 +1,8 @@
-include "../include/script.evs";
-#asm
-	include "res/charmap.inc"
-	include "entity.inc"
-#end
+include "scripts/header.evs";
+//#asm
+//	include "res/charmap.inc"
+//	include "entity.inc"
+//#end
 
 npc xWalkAround {
 	lock();
