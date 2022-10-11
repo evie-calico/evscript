@@ -94,9 +94,11 @@ script xGenerateHalls {
 }
 
 script xGenerateItems {
+	u8 x;
+	u8 y;
 	do {
-		u8 x = rand() & 63;
-		u8 y = rand() & 63;
+		x = rand() & 63;
+		y = rand() & 63;
 		u8 tile = map_get_tile(x, y);
 	} while tile != TILE_CLEAR;
 

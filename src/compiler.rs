@@ -153,33 +153,41 @@ impl TypeTable {
 struct Variable {
 	name: Option<String>,
 	t: Type,
+	scope_level: u32,
 }
 
 #[derive(Debug)]
 struct VariableTable {
-	variables: [Option<Variable>; 256]
+	peak_usage: u8,
+	// Used to free variables by scope.
+	scope_level: u32,
+	variables: [Option<Variable>; 256],
 }
 
 impl VariableTable {
 	fn new() -> VariableTable {
-		VariableTable { variables: [
-			None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-			None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-			None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-			None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-			None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-			None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-			None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-			None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-			None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-			None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-			None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-			None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-			None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-			None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-			None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-			None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
-		]}
+		VariableTable {
+			scope_level: 0,
+			peak_usage: 0,
+			variables: [
+				None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+				None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+				None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+				None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+				None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+				None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+				None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+				None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+				None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+				None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+				None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+				None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+				None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+				None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+				None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+				None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+			],
+		}
 	}
 
 	fn alloc(&mut self, t: Type) -> Result<u8, String> {
@@ -189,9 +197,15 @@ impl VariableTable {
 			match &self.variables[i] {
 				Some(var) => i += var.t.size as usize,
 				None => {
+					let this_peak = i as u8 + t.size;
+					if self.peak_usage < this_peak {
+						self.peak_usage = this_peak;
+					}
+
 					let new_var = Variable {
 						name: None,
 						t,
+						scope_level: self.scope_level,
 					};
 					self.variables[i as usize] = Some(new_var);
 					return Ok(i as u8);
@@ -250,11 +264,24 @@ impl VariableTable {
 		}
 	}
 
-	fn is_named(&self, i: u8) -> bool {
-		if let Some(var) = &self.variables[i as usize] {
-			var.name != None
-		} else {
-			panic!("Variable {i} does not exist");
+	fn push_scope(&mut self) {
+		self.scope_level += 1;
+	}
+
+	fn pop_scope(&mut self) {
+		self.scope_level -= 1;
+		let mut i = 0;
+
+		while i < 256 {
+			if let Some(variable) = &self.variables[i] {
+				let this_size = variable.t.size as usize;
+				if variable.scope_level > self.scope_level {
+					self.variables[i as usize] = None;
+				}
+				i += this_size;
+			} else {
+				i += 1;
+			}
 		}
 	}
 }
@@ -675,13 +702,8 @@ fn compile_expression<W: Write>(
 			let source = compile_expression(*i, env, type_table, vtable, str_table, output)?
 				.ok_or(String::from("Expression has no return value"))?;
 
-			if vtable.is_named(source) {
-				writeln!(output, "\tdb {}, {dest}, {source}", env.expand(&format!("mov_{dest_type}"))?)
-					.map_err(|err| err.to_string())?;
-			} else {
-				*vtable.name_of(source) = Some(name);
-				vtable.free(dest);
-			}
+			writeln!(output, "\tdb {}, {dest}, {source}", env.expand(&format!("mov_{dest_type}"))?)
+				.map_err(|err| err.to_string())?;
 
 			vtable.autofree(source);
 
@@ -728,9 +750,11 @@ fn compile_statement<W: Write>(
 
 			vtable.autofree(condition_result);
 
+			vtable.push_scope();
 			for i in contents {
 				compile_statement(i, env, type_table, label_index, vtable, str_table, output)?;
 			}
+			vtable.pop_scope();
 
 			if let Some(..) = else_contents {
 				writeln!(
@@ -743,9 +767,11 @@ fn compile_statement<W: Write>(
 			writeln!(output, ".__else{l}").map_err(|err| err.to_string())?;
 
 			if let Some(else_statements) = else_contents {
+				vtable.push_scope();
 				for i in else_statements {
 					compile_statement(i, env, type_table, label_index, vtable, str_table, output)?;
 				}
+				vtable.pop_scope();
 			}
 
 			writeln!(output, ".__end{l}").map_err(|err| err.to_string())?;
@@ -763,9 +789,11 @@ fn compile_statement<W: Write>(
 
 			writeln!(output, ".__while{l}").map_err(|err| err.to_string())?;
 
+			vtable.push_scope();
 			for i in contents {
 				compile_statement(i, env, type_table, label_index, vtable, str_table, output)?;
 			}
+			vtable.pop_scope();
 			
 			writeln!(output, ".__end{l}").map_err(|err| err.to_string())?;
 
@@ -786,9 +814,11 @@ fn compile_statement<W: Write>(
 
 			writeln!(output, ".__while{l}").map_err(|err| err.to_string())?;
 
+			vtable.push_scope();
 			for i in contents {
 				compile_statement(i, env, type_table, label_index, vtable, str_table, output)?;
 			}
+			vtable.pop_scope();
 			
 			writeln!(output, ".__end{l}").map_err(|err| err.to_string())?;
 
@@ -819,9 +849,11 @@ fn compile_statement<W: Write>(
 
 			writeln!(output, ".__for{l}").map_err(|err| err.to_string())?;
 
+			vtable.push_scope();
 			for i in contents {
 				compile_statement(i, env, type_table, label_index, vtable, str_table, output)?;
 			}
+			vtable.pop_scope();
 
 			// Execute epliogue before checking condition
 			compile_statement(*epilogue, env, type_table, label_index, vtable, str_table, output)?;
@@ -849,9 +881,11 @@ fn compile_statement<W: Write>(
 
 			writeln!(output, ".__repeat{l}").map_err(|err| err.to_string())?;
 
+			vtable.push_scope();
 			for i in contents {
 				compile_statement(i, env, type_table, label_index, vtable, str_table, output)?;
 			}
+			vtable.pop_scope();
 
 			// Execute epilogue before checking condition
 			let scratch = vtable.alloc(Type { signed: false, size: 1 })?;
@@ -897,9 +931,11 @@ fn compile_statement<W: Write>(
 
 			writeln!(output, ".__loop{l}").map_err(|err| err.to_string())?;
 
+			vtable.push_scope();
 			for i in contents {
 				compile_statement(i, env, type_table, label_index, vtable, str_table, output)?;
 			}
+			vtable.pop_scope();
 
 			writeln!(
 				output,
@@ -947,7 +983,8 @@ fn compile_function<W: Write>(
 		i += 1;
 	}
 
-	println!("{vtable:#?}");
+	// TODO: make this message optional via command-line argument.
+	println!("({name}) Peak usage: {}", vtable.peak_usage);
 
 	Ok(())
 }
