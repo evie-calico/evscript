@@ -29,3 +29,10 @@ env npc {
 	alias wait() = print_wait();
 	pool = 8;
 }
+
+script Main {
+	u8 x = 6 * 3;
+	u8 y = 9 + 8;
+	u8 z = x + y;
+	u8 a = 4;
+}
