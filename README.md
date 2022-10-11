@@ -9,6 +9,3 @@ My main goals are:
 4. Structures
 5. ✓ ~~Bytecode return values~~
 7. Codegen Optimizations
-
-I am rewriting evscript to remove its dependency on Bison and Flex, and to make it easier to install, using `cargo`.
-I also want to make the entire codebase much cleaner and easier to understand, including the lexer, parser, and compiler.
