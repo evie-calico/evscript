@@ -121,63 +121,193 @@ Assignment: Statement = {
 Expr = { LogicalOr }
 
 LogicalOr: Rpn = {
-	<l:LogicalOr> "||" <r:LogicalAnd> => Rpn::LogicalOr(Box::new(l), Box::new(r)),
+	<l:LogicalOr> "||" <r:LogicalAnd> => {
+		if let Rpn::Signed(l) = l {
+			if let Rpn::Signed(r) = r {
+				return Rpn::Signed((l != 0 || r != 0) as i64);
+			}
+		}
+		Rpn::LogicalOr(Box::new(l), Box::new(r))
+	},
 	LogicalAnd,
 }
 
 LogicalAnd: Rpn = {
-	<l:LogicalAnd> "&&" <r:Compare> => Rpn::LogicalAnd(Box::new(l), Box::new(r)),
+	<l:LogicalAnd> "&&" <r:Compare> => {
+		if let Rpn::Signed(l) = l {
+			if let Rpn::Signed(r) = r {
+				return Rpn::Signed((l != 0 && r != 0) as i64);
+			}
+		}
+		Rpn::LogicalAnd(Box::new(l), Box::new(r))
+	},
 	Compare,
 }
 
 Compare: Rpn = {
-	<l:Compare> "==" <r:BinaryOr> => Rpn::Equ(Box::new(l), Box::new(r)),
-	<l:Compare> "!=" <r:BinaryOr> => Rpn::NotEqu(Box::new(l), Box::new(r)),
-	<l:Compare> "<" <r:BinaryOr> => Rpn::LessThan(Box::new(l), Box::new(r)),
-	<l:Compare> "<=" <r:BinaryOr> => Rpn::LessThanEqu(Box::new(l), Box::new(r)),
-	<l:Compare> ">" <r:BinaryOr> => Rpn::GreaterThan(Box::new(l), Box::new(r)),
-	<l:Compare> ">=" <r:BinaryOr> => Rpn::GreaterThanEqu(Box::new(l), Box::new(r)),
+	<l:Compare> "==" <r:BinaryOr> => {
+		if let Rpn::Signed(l) = l {
+			if let Rpn::Signed(r) = r {
+				return Rpn::Signed((l == r) as i64);
+			}
+		}
+		Rpn::Equ(Box::new(l), Box::new(r))
+	},
+	<l:Compare> "!=" <r:BinaryOr> => {
+		if let Rpn::Signed(l) = l {
+			if let Rpn::Signed(r) = r {
+				return Rpn::Signed((l != r) as i64);
+			}
+		}
+		Rpn::NotEqu(Box::new(l), Box::new(r))
+	},
+	<l:Compare> "<" <r:BinaryOr> => {
+		if let Rpn::Signed(l) = l {
+			if let Rpn::Signed(r) = r {
+				return Rpn::Signed((l < r) as i64);
+			}
+		}
+		Rpn::LessThan(Box::new(l), Box::new(r))
+	},
+	<l:Compare> "<=" <r:BinaryOr> => {
+		if let Rpn::Signed(l) = l {
+			if let Rpn::Signed(r) = r {
+				return Rpn::Signed((l <= r) as i64);
+			}
+		}
+		Rpn::LessThanEqu(Box::new(l), Box::new(r))
+	},
+	<l:Compare> ">" <r:BinaryOr> => {
+		if let Rpn::Signed(l) = l {
+			if let Rpn::Signed(r) = r {
+				return Rpn::Signed((l > r) as i64);
+			}
+		}
+		Rpn::GreaterThan(Box::new(l), Box::new(r))
+	},
+	<l:Compare> ">=" <r:BinaryOr> => {
+		if let Rpn::Signed(l) = l {
+			if let Rpn::Signed(r) = r {
+				return Rpn::Signed((l >= r) as i64);
+			}
+		}
+		Rpn::GreaterThanEqu(Box::new(l), Box::new(r))
+	},
 	BinaryOr,
 }
 
 BinaryOr: Rpn = {
-	<l:BinaryOr> "|" <r:BinaryXor> => Rpn::BinaryOr(Box::new(l), Box::new(r)),
+	<l:BinaryOr> "|" <r:BinaryXor> => {
+		if let Rpn::Signed(l) = l {
+			if let Rpn::Signed(r) = r {
+				return Rpn::Signed(l | r);
+			}
+		}
+		Rpn::BinaryOr(Box::new(l), Box::new(r))
+	},
 	BinaryXor,
 }
 
 BinaryXor: Rpn = {
-	<l:BinaryAnd> "^" <r:BinaryAnd> => Rpn::BinaryXor(Box::new(l), Box::new(r)),
+	<l:BinaryAnd> "^" <r:BinaryAnd> => {
+		if let Rpn::Signed(l) = l {
+			if let Rpn::Signed(r) = r {
+				return Rpn::Signed(l ^ r);
+			}
+		}
+		Rpn::BinaryXor(Box::new(l), Box::new(r))
+	},
 	BinaryAnd,
 }
 
 BinaryAnd: Rpn = {
-	<l:BinaryAnd> "&" <r:Shift> => Rpn::BinaryAnd(Box::new(l), Box::new(r)),
+	<l:BinaryAnd> "&" <r:Shift> => {
+		if let Rpn::Signed(l) = l {
+			if let Rpn::Signed(r) = r {
+				return Rpn::Signed(l & r);
+			}
+		}
+		Rpn::BinaryAnd(Box::new(l), Box::new(r))
+	},
 	Shift,
 }
 
 Shift: Rpn = {
-	<l:Shift> "<<" <r:Addition> => Rpn::ShiftLeft(Box::new(l), Box::new(r)),
-	<l:Shift> ">>" <r:Addition> => Rpn::ShiftRight(Box::new(l), Box::new(r)),
+	<l:Shift> "<<" <r:Addition> => {
+		if let Rpn::Signed(l) = l {
+			if let Rpn::Signed(r) = r {
+				return Rpn::Signed(l << r);
+			}
+		}
+		Rpn::ShiftLeft(Box::new(l), Box::new(r))
+	},
+	<l:Shift> ">>" <r:Addition> => {
+		if let Rpn::Signed(l) = l {
+			if let Rpn::Signed(r) = r {
+				return Rpn::Signed(l >> r);
+			}
+		}
+		Rpn::ShiftRight(Box::new(l), Box::new(r))
+	},
 	Addition,
 }
 
 Addition: Rpn = {
-	<l:Addition> "+" <r:Factor> => Rpn::Add(Box::new(l), Box::new(r)),
-	<l:Addition> "-" <r:Factor> => Rpn::Sub(Box::new(l), Box::new(r)),
+	<l:Addition> "+" <r:Factor> => {
+		if let Rpn::Signed(l) = l {
+			if let Rpn::Signed(r) = r {
+				return Rpn::Signed(l + r);
+			}
+		}
+		Rpn::Add(Box::new(l), Box::new(r))
+	},
+	<l:Addition> "-" <r:Factor> => {
+		if let Rpn::Signed(l) = l {
+			if let Rpn::Signed(r) = r {
+				return Rpn::Signed(l - r);
+			}
+		}
+		Rpn::Sub(Box::new(l), Box::new(r))
+	},
 	Factor,
 };
 
 Factor: Rpn = {
-	<l:Factor> "*" <r:Unary> => Rpn::Mul(Box::new(l), Box::new(r)),
-	<l:Factor> "/" <r:Unary> => Rpn::Div(Box::new(l), Box::new(r)),
-	<l:Factor> "%" <r:Unary> => Rpn::Mod(Box::new(l), Box::new(r)),
+	<l:Factor> "*" <r:Unary> => {
+		if let Rpn::Signed(l) = l {
+			if let Rpn::Signed(r) = r {
+				return Rpn::Signed(l * r);
+			}
+		}
+		Rpn::Mul(Box::new(l), Box::new(r))
+	},
+	<l:Factor> "/" <r:Unary> => {
+		if let Rpn::Signed(l) = l {
+			if let Rpn::Signed(r) = r {
+				return Rpn::Signed(l / r);
+			}
+		}
+		Rpn::Div(Box::new(l), Box::new(r))
+	},
+	<l:Factor> "%" <r:Unary> => {
+		if let Rpn::Signed(l) = l {
+			if let Rpn::Signed(r) = r {
+				return Rpn::Signed(l % r);
+			}
+		}
+		Rpn::Mod(Box::new(l), Box::new(r))
+	},
 	Unary,
 };
 
 Unary: Rpn = {
-	"-" <l:Term> => Rpn::Negate(Box::new(l)),
+	"-" <l:Term> => {
+		if let Rpn::Signed(i) = l {
+			return Rpn::Signed(-i)
+		}
+		Rpn::Negate(Box::new(l))
+	},
 	"!" <l:Term> => {
-		// TODO: Evalutate constant expressions like this for all operators.
 		if let Rpn::Signed(i) = l {
 			return Rpn::Signed(!i)
 		}
