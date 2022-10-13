@@ -730,11 +730,26 @@ fn compile_statement<W: Write>(
 			*vtable.name_of(new_var) = Some(name);
 		}
 		types::Statement::DeclareAssign(t, name, rpn) => {
-			// Create a new variable
-			let new_var = vtable.alloc(type_table.lookup(&t)?)?;
-			*vtable.name_of(new_var) = Some(name.clone());
-			// Compile the Set.
-			compile_expression(rpn, env, type_table, vtable, str_table, output)?;
+			match rpn {
+				Rpn::Variable(name) => {
+					// Create a new variable
+					let dest_type = type_table.lookup(&t)?;
+					let dest = vtable.alloc(dest_type)?;
+					*vtable.name_of(dest) = Some(name.clone());
+
+					let source = vtable.lookup(&name)?;
+
+					writeln!(output, "\tdb {}, {dest}, {source}", env.expand(&format!("mov_{dest_type}"))?)
+						.map_err(|err| err.to_string())?;
+
+					vtable.autofree(source);
+				}
+				_ => {
+					let new_var = compile_expression(rpn, env, type_table, vtable, str_table, output)?
+						.ok_or(String::from("Expression has no return value"))?;
+					*vtable.name_of(new_var) = Some(name);
+				}
+			}
 		},
 		types::Statement::If(condition, contents, else_contents) => {
 			let condition_result = compile_expression(condition, env, type_table, vtable, str_table, output)?

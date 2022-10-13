@@ -72,7 +72,7 @@ Statement: Statement = {
 
 	<expr:Expr> ";" => Statement::Expression(expr),
 	<t:Iden> <i:Iden> ";" => Statement::Declaration(t, i),
-	<t:Iden> <l:Iden> "=" <r:Expr> ";" => Statement::DeclareAssign(t, l.clone(), Rpn::Set(l, Box::new(r))),
+	<t:Iden> <l:Iden> "=" <r:Expr> ";" => Statement::DeclareAssign(t, l, r),
 	Assignment,
 	IfContainer,
 	"while" <cond:Expr> "{" <contents:Statement*> "}" => Statement::While(cond, contents),
