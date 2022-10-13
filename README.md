@@ -8,4 +8,4 @@ My main goals are:
 3. ✓ ~~Scoped variables (remove `drop`)~~
 4. Structures
 5. ✓ ~~Bytecode return values~~
-7. Codegen Optimizations
+7. ✓ ~~Codegen Optimizations~~
