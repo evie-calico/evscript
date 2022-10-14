@@ -115,22 +115,45 @@ impl Environment {
 
 type EnvironmentTable = HashMap<String, Environment>;
 
+#[derive(Debug, Clone, PartialEq)]
+enum Type {
+	Primative(Primative),
+	Struct(Vec<(String, Type)>),
+}
+
+impl Type {
+	fn size(&self) -> u8 {
+		match self {
+			Type::Primative(t) => t.size,
+			Type::Struct(t) => {
+				let mut this_size = 0;
+
+				for (_, i) in t {
+					this_size += i.size();
+				}
+
+				this_size
+			}
+		}
+	}
+}
+
 #[derive(Debug, Copy, Clone, PartialEq)]
-struct Type {
+struct Primative {
 	signed: bool,
 	size: u8,
 }
 
-impl Type {
-	fn from(l: Type, r: Type) -> Type {
-		Type {
+impl Primative {
+	fn from(l: Primative, r: Primative) -> Primative {
+		Primative {
 			signed: l.signed || r.signed,
 			size: if l.size >= r.size { l.size } else { r.size },
 		}
 	}
 }
 
-impl fmt::Display for Type {
+impl fmt::Display for Primative {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		write!(f, "{}{}", if self.signed { 'i' } else { 'u' }, self.size * 8)
 	}
@@ -141,9 +164,21 @@ struct TypeTable {
 }
 
 impl TypeTable {
-	fn lookup(&self, name: &str) -> Result<Type, String> {
+	fn lookup_type(&self, name: &str) -> Result<Type, String> {
 		match self.table.get(name) {
-			Some(t) => Ok(*t),
+			Some(t) => Ok(t.clone()),
+			None => return Err(format!("Type {name} not found")),
+		}
+	}
+
+	fn lookup_primative(&self, name: &str) -> Result<Primative, String> {
+		match self.table.get(name) {
+			Some(t) => {
+				match t {
+					Type::Primative(result) => Ok(*result),
+					Type::Struct(..) => return Err(format!("{name} must be a primative type"))
+				}
+			},
 			None => return Err(format!("Type {name} not found")),
 		}
 	}
@@ -195,9 +230,9 @@ impl VariableTable {
 
 		while i < 256 {
 			match &self.variables[i] {
-				Some(var) => i += var.t.size as usize,
+				Some(var) => i += var.t.size() as usize,
 				None => {
-					let this_peak = i as u8 + t.size;
+					let this_peak = i as u8 + t.size();
 					if self.peak_usage < this_peak {
 						self.peak_usage = this_peak;
 					}
@@ -234,16 +269,64 @@ impl VariableTable {
 	fn lookup(&self, name: &str) -> Result<u8, String> {
 		let mut i = 0;
 
-		while i < 256 {
-			if let Some(variable) = &self.variables[i] {
-				if let Some(variable_name) = &variable.name {
-					if variable_name == name {
-						return Ok(i as u8);
+		let components: Vec<&str> = name.split('.').collect();
+
+		if components.len() == 1 {
+			while i < 256 {
+				if let Some(variable) = &self.variables[i] {
+					if let Some(variable_name) = &variable.name {
+						if variable_name == name {
+							return Ok(i as u8);
+						}
 					}
+					i += variable.t.size() as usize;
+				} else {
+					i += 1;
 				}
-				i += variable.t.size as usize;
-			} else {
-				i += 1;
+			}
+		} else {
+			while i < 256 {
+				if let Some(variable) = &self.variables[i] {
+					if let Some(variable_name) = &variable.name {
+						if let Type::Struct(struct_type) = &variable.t {
+							if variable_name == components[0] {
+								// Now that we've found a struct, we'll traverse it to find the member.
+								let mut comp_i = 1;
+								while comp_i < components.len() {
+									let mut offset = 0;
+
+									for (member_name, member) in struct_type {
+										if member_name == components[comp_i] {
+											match member {
+												Type::Primative(primative) => {
+													if comp_i + 1 != components.len() {
+														return Err(format!("{member_name} is a {primative} and has no members"))
+													}
+													return Ok((i + offset) as u8);
+												}
+												Type::Struct(..) => {
+													if comp_i + 1 == components.len() {
+														return Ok((i + offset) as u8);
+													} else {
+														comp_i += 1;
+													}
+												}
+											}
+										}
+
+										offset += member.size() as usize;
+									}
+								}
+								return Err(format!("Cannot find member of {name} in {variable_name}"))
+							}
+						} else {
+							return Err(format!("{} is not a struct", components[0]));
+						}
+					}
+					i += variable.t.size() as usize;
+				} else {
+					i += 1;
+				}
 			}
 		}
 
@@ -257,11 +340,69 @@ impl VariableTable {
 		}
 	}
 
-	fn type_of(&mut self, i: u8) -> Type {
-		match &self.variables[i as usize] {
-			Some(var) => var.t,
-			None => panic!("Variable index {i} does not exist"),
+	fn type_of(&mut self, id: u8) -> Primative {
+		let id = id as usize;
+
+		match &self.variables[id] {
+			Some(var) => match var.t {
+				Type::Primative(result) => return result,
+				Type::Struct(..) => {}
+			},
+			None => {}
 		}
+
+		// If the variable does not exist, there's a chance it's a struct member.
+		// Walk backwards until a structure is found, then check if it has a member at the provided index.
+		let mut index = id;
+
+		loop {
+			match &self.variables[index] {
+				Some(var) => {
+					fn seek_struct(
+						members: &Vec<(String, Type)>,
+						id: usize,
+						mut member_offset: usize,
+					) -> Primative {
+						for (_, i) in members {
+							if id < member_offset {
+								panic!("Variable index {id} does not exist");
+							}
+
+							match i {
+								Type::Primative(primative) => {
+									if id == member_offset {
+										return *primative;
+									}
+								}
+								Type::Struct(members) => {
+									if id < member_offset + i.size() as usize {
+										return seek_struct(members, id, member_offset);
+									}
+								}
+							}
+
+							member_offset += i.size() as usize;
+						}
+						panic!("Variable index {id} does not exist");
+					}
+
+					match &var.t {
+						Type::Primative(..) => break,
+						Type::Struct(members) => {
+							return seek_struct(&members, id, index);
+						}
+					}
+				}
+				None => {}
+			}
+
+			if let Some(result) = index.checked_sub(1) {
+				index = result;
+			} else {
+				break;
+			}
+		}
+		panic!("Variable index {id} does not exist");
 	}
 
 	fn push_scope(&mut self) {
@@ -274,7 +415,7 @@ impl VariableTable {
 
 		while i < 256 {
 			if let Some(variable) = &self.variables[i] {
-				let this_size = variable.t.size as usize;
+				let this_size = variable.t.size() as usize;
 				if variable.scope_level > self.scope_level {
 					self.variables[i as usize] = None;
 				}
@@ -394,8 +535,8 @@ fn compile_expression<W: Write>(
 		let r = compile_expression(*r, env, type_table, vtable, str_table, output)?
 			.ok_or(String::from("Expression has no return value"))?;
 
-		let result_type = Type::from(vtable.type_of(l), vtable.type_of(r));
-		let result = vtable.alloc(result_type)?;
+		let result_type = Primative::from(vtable.type_of(l), vtable.type_of(r));
+		let result = vtable.alloc(Type::Primative(result_type))?;
 		// TODO: make opcodes consider operation size.
 
 		writeln!(output, "\tdb {}, {result}, {l}, {r}", env.expand(&format!("{op}_{result_type}"))?)
@@ -413,8 +554,8 @@ fn compile_expression<W: Write>(
 				Ok(i) => Ok(Some(i)),
 				Err(..) => {
 					// TODO: make the default integer type configurable
-					let result_type = Type { signed: false, size: 1 };
-					let result = vtable.alloc(result_type)?;
+					let result_type = Primative { signed: false, size: 1 };
+					let result = vtable.alloc(Type::Primative(result_type))?;
 					// put (result), value
 					writeln!(output, "\tdb {}, {result}, {name}", env.expand(&format!("put_{result_type}"))?)
 						.map_err(|err| err.to_string())?;
@@ -426,16 +567,16 @@ fn compile_expression<W: Write>(
 			// The "default" type of an integer is u8 (think C's int)
 			// This is because most projects will probably only have the 8-bit bytecode installed.
 			// TODO: make the default integer type configurable
-			let result_type = Type { signed: false, size: 1 };
-			let result = vtable.alloc(result_type)?;
+			let result_type = Primative { signed: false, size: 1 };
+			let result = vtable.alloc(Type::Primative(result_type))?;
 			// put (result), value
 			writeln!(output, "\tdb {}, {result}, ${value:X}", env.expand(&format!("put_{result_type}"))?)
 				.map_err(|err| err.to_string())?;
 			Ok(Some(result))
 		}
 		Rpn::String(string) => {
-			let result_type = Type { signed: false, size: 2 };
-			let result = vtable.alloc(result_type)?;
+			let result_type = Primative { signed: false, size: 2 };
+			let result = vtable.alloc(Type::Primative(result_type))?;
 			let value = format!(".__string{}", str_table.len());
 			// TODO: make this a 16-bit put
 			writeln!(output, "\tdb {}, {result}, LOW({value})", env.expand(&format!("put_u8"))?)
@@ -458,7 +599,7 @@ fn compile_expression<W: Write>(
 								if return_id != None {
 									return Err(String::from("A function may only have one return value"));
 								}
-								return_id = Some(vtable.alloc(type_table.lookup(&t)?)?);
+								return_id = Some(vtable.alloc(type_table.lookup_type(&t)?)?);
 							}
 						}
 					}
@@ -478,7 +619,7 @@ fn compile_expression<W: Write>(
 								let this_arg = compile_expression(args[index].clone(), env, type_table, vtable, str_table, output)?
 									.ok_or(String::from("Expression has no return value"))?;
 
-								if type_table.lookup(&t)? != vtable.type_of(this_arg) {
+								if type_table.lookup_primative(&t)? != vtable.type_of(this_arg) {
 									eprintln!("WARN: argument type does not match definition");
 								}
 
@@ -517,7 +658,7 @@ fn compile_expression<W: Write>(
 								if return_id != None {
 									return Err(String::from("A function may only have one return value"));
 								}
-								return_id = Some(vtable.alloc(type_table.lookup(&t)?)?);
+								return_id = Some(vtable.alloc(type_table.lookup_type(&t)?)?);
 							}
 						}
 					}
@@ -538,7 +679,7 @@ fn compile_expression<W: Write>(
 								let this_arg = compile_expression(args[index].clone(), env, type_table, vtable, str_table, output)?
 									.ok_or(String::from("Expression has no return value"))?;
 
-								if type_table.lookup(&t)? != vtable.type_of(this_arg) {
+								if type_table.lookup_primative(&t)? != vtable.type_of(this_arg) {
 									eprintln!("WARN: argument type does not match definition");
 								}
 
@@ -594,7 +735,7 @@ fn compile_expression<W: Write>(
 								if return_id != None {
 									return Err(String::from("A function may only have one return value"));
 								}
-								return_id = Some(vtable.alloc(type_table.lookup(&t)?)?);
+								return_id = Some(vtable.alloc(type_table.lookup_type(&t)?)?);
 							}
 						}
 					}
@@ -614,7 +755,7 @@ fn compile_expression<W: Write>(
 								let this_arg = compile_expression(args[index].clone(), env, type_table, vtable, str_table, output)?
 									.ok_or(String::from("Expression has no return value"))?;
 
-								if type_table.lookup(&t)? != vtable.type_of(this_arg) {
+								if type_table.lookup_primative(&t)? != vtable.type_of(this_arg) {
 									eprintln!("WARN: argument type does not match definition");
 								}
 
@@ -644,8 +785,8 @@ fn compile_expression<W: Write>(
 			let operand = compile_expression(*i, env, type_table, vtable, str_table, output)?
 				.ok_or(String::from("Expression has no return value"))?;
 			let operand_type = vtable.type_of(operand);
-			let zero = vtable.alloc(operand_type)?;
-			let result = vtable.alloc(operand_type)?;
+			let zero = vtable.alloc(Type::Primative(operand_type))?;
+			let result = vtable.alloc(Type::Primative(operand_type))?;
 			// TODO: make opcodes consider operand size.
 			writeln!(output, "\tdb {}, {zero}, $0", env.expand(&format!("put_{operand_type}"))?)
 				.map_err(|err| err.to_string())?;
@@ -662,8 +803,8 @@ fn compile_expression<W: Write>(
 				.ok_or(String::from("Expression has no return value"))?;
 			let operand_type = vtable.type_of(operand);
 			// TODO: make the default integer type configurable per-environment
-			let ff = vtable.alloc(operand_type)?;
-			let result = vtable.alloc(operand_type)?;
+			let ff = vtable.alloc(Type::Primative(operand_type))?;
+			let result = vtable.alloc(Type::Primative(operand_type))?;
 			writeln!(output, "\tdb {}, {ff}, $FF", env.expand(&format!("put_{operand_type}"))?)
 				.map_err(|err| err.to_string())?;
 			writeln!(output, "\tdb {}, {result}, {operand}, {ff}", env.expand(&format!("xor_{operand_type}"))?)
@@ -726,15 +867,18 @@ fn compile_statement<W: Write>(
 			compile_expression(rpn, env, type_table, vtable, str_table, output)?;
 		}
 		types::Statement::Declaration(t, name) => {
-			let new_var = vtable.alloc(type_table.lookup(&t)?)?;
+			let new_var = vtable.alloc(type_table.lookup_type(&t)?)?;
 			*vtable.name_of(new_var) = Some(name);
 		}
 		types::Statement::DeclareAssign(t, name, rpn) => {
 			match rpn {
 				Rpn::Variable(name) => {
 					// Create a new variable
-					let dest_type = type_table.lookup(&t)?;
-					let dest = vtable.alloc(dest_type)?;
+					let dest_type = match type_table.lookup_primative(&t) {
+						Ok(t) => t,
+						Err(..) => return Err(String::from("Cannot assign to structures, assign to individual members instead"))
+					};
+					let dest = vtable.alloc(Type::Primative(dest_type))?;
 					*vtable.name_of(dest) = Some(name.clone());
 
 					let source = vtable.lookup(&name)?;
@@ -903,7 +1047,7 @@ fn compile_statement<W: Write>(
 			vtable.pop_scope();
 
 			// Execute epilogue before checking condition
-			let scratch = vtable.alloc(Type { signed: false, size: 1 })?;
+			let scratch = vtable.alloc(Type::Primative(Primative { signed: false, size: 1 }))?;
 
 			writeln!(
 				output,
@@ -1044,6 +1188,18 @@ fn compile_ast<W: Write>(
 					exit(1);
 				}
 			}
+			types::Root::Typedef { name, t } => {
+				type_table.table.insert(name, type_table.lookup_type(&t)?);
+			}
+			types::Root::Struct { name, contents } => {
+				let mut struct_members = Vec::<(String, Type)>::new();
+
+				for i in contents {
+					struct_members.push((i.name, type_table.lookup_type(&i.t)?));
+				}
+
+				type_table.table.insert(name, Type::Struct(struct_members));
+			}
 		}
 	}
 
@@ -1056,8 +1212,8 @@ pub fn compile<W: Write>(ast: Vec<types::Root>, output: &mut W) -> Result<(), St
 	]);
 
 	let mut type_table = TypeTable { table: HashMap::<String, Type>::from([
-		(String::from("u8"), Type { signed: false, size: 1 } ),
-		(String::from("u16"), Type { signed: false, size: 2 } ),
+		(String::from("u8"), Type::Primative(Primative { signed: false, size: 1 } )),
+		(String::from("u16"), Type::Primative(Primative { signed: false, size: 2 } )),
 	]) };
 
 	compile_ast(ast, &mut environment_table, &mut type_table, output)

@@ -11,14 +11,14 @@ match {
 	"+", "-", "*", "/", "%", "&", "^", "|", "<<", ">>", "!",
 	"==", "!=", "<", ">", "<=", ">=", "&&", "||",
 	"=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=",
-	"...", "$",
+	"...", "$", ":",
 	"(", ")", "{", "}",
-	r"[a-zA-Z_][a-zA-Z0-9_]*",
+	r"[a-zA-Z_][a-zA-Z0-9_.]*",
 	r#""([^"]|\.)*""#,
 	r"-?[0-9]+",
 	";", ",",
 	"env", "use", "include", "def", "alias", "macro", "pool", "terminator",
-	"return", "yield",
+	"return", "yield", "typedef", "struct",
 	"if", "else", "while", "do", "for", "repeat", "loop",
 	r"#asm[^#]*#end",
 
@@ -55,6 +55,12 @@ Root: Root = {
 		Ok(Root::Assembly(result))
 	},
 	"include" <path:String> ";" => Root::Include(path),
+	"typedef" <name:Iden> "=" <t:Iden> ";" => Root::Typedef { name, t },
+	"struct" <name:Iden> "{" <contents:Comma<StructMember>> "}" => Root::Struct { name, contents },
+}
+
+StructMember: StructMember = {
+	<name:Iden> ":" <t:Iden> => StructMember { name, t },
 }
 
 Statement: Statement = {
@@ -334,7 +340,7 @@ Num: Rpn = {
 };
 
 Iden: String = {
-	r"[a-zA-Z_][a-zA-Z0-9_]*" => String::from(<>),
+	r"[a-zA-Z_][a-zA-Z0-9_.]*" => String::from(<>),
 };
 
 String: String = {

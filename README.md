@@ -1,11 +1,7 @@
 # evscript
+## An extensible bytecode-based scripting engine
 
-This is a re-write of [evscript](https://github.com/eievui5/evscript)
+## Credits
 
-My main goals are:
-1. ✓ ~~Feature-parity with the C++ version of evscript~~
-2. ✓ ~~Expressions~~
-3. ✓ ~~Scoped variables (remove `drop`)~~
-4. Structures
-5. ✓ ~~Bytecode return values~~
-7. ✓ ~~Codegen Optimizations~~
+- [poryscript](https://github.com/huderlem/poryscript) for inspiring this project.
+- And everyone at gbdev who helped me along the way :)

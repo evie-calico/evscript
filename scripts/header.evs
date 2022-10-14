@@ -1,8 +1,17 @@
 #asm include "script.inc" #end
 
+typedef ptr = u16;
+
+struct sprite {
+	y: u8,
+	x: u8,
+	tile: u8,
+	attributes: u8,
+}
+
 env script {
 	use std;
-	def memset(u16, u8, u16);
+	def memset(ptr, u8, u16);
 	def rand(return u8);
 	def print(u16);
 	def say(u16);
@@ -11,7 +20,7 @@ env script {
 	def map_put_tile(u8, u8, u8);
 	def map_get_tile(u8, u8, return u8);
 	def step_direction(u8, u8, u8);
-	def draw_sprite(u8);
+	def draw_sprite(sprite);
 	def npc_move(u8, u16, u16);
 	def npc_set_frame(u8, u8);
 	def npc_lock();
@@ -31,8 +40,7 @@ env npc {
 }
 
 script Main {
-	u8 x = 6 * 3;
-	u8 y = 9 + 8;
-	u8 z = x + y;
-	u8 a = 4;
+	sprite player;
+	player.y = 1;
+	player.x = player.y + 1;
 }

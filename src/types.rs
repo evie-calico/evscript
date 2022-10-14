@@ -24,6 +24,8 @@ pub enum Root {
 	Function(String, Function),
 	Assembly(String),
 	Include(String),
+	Typedef { name: String, t: String },
+	Struct { name: String, contents: Vec<StructMember> },
 }
 
 // Top-level statements.
@@ -36,6 +38,12 @@ pub struct Environment {
 pub struct Function {
 	pub environment: String,
 	pub contents: Vec<Statement>
+}
+
+#[derive(Debug)]
+pub struct StructMember {
+	pub name: String,
+	pub t: String
 }
 
 // Environment statements
