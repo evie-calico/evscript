@@ -122,8 +122,8 @@ impl Environment {
 		Environment {
 			name: String::from("std"),
 			definitions: HashMap::from([
-				define!("return", 0),
-				define!("yield", 1),
+				define!("ret", 0),
+				define!("yld", 1),
 				define!("put_u8", 2),
 				sign_alias!("put_u8", "put_i8"),
 				define!("mov_u8", 3),
@@ -164,9 +164,9 @@ impl Environment {
 				sign_alias!("land_u8", "land_i8"),
 				define!("lor_u8", 21),
 				sign_alias!("lor_u8", "lor_i8"),
-				define!("goto", 22),
-				define!("goto_if_true", 23),
-				define!("goto_if_false", 24),
+				define!("jmp", 22),
+				define!("jmp_if_true", 23),
+				define!("jmp_if_false", 24),
 			]),
 			pool: 0,
 		}
@@ -620,12 +620,122 @@ fn compile_expression<W: Write>(
 		let result = vtable.alloc(Type::Primative(result_type))?;
 		// TODO: make opcodes consider operation size.
 
-		writeln!(output, "\tdb {}, {result}, {l}, {r}", env.expand(&format!("{op}_{result_type}"))?)?;
+		writeln!(output, "\tdb {}, {l}, {r}, {result}", env.expand(&format!("{op}_{result_type}"))?)?;
 
 		vtable.autofree(l);
 		vtable.autofree(r);
 
 		Ok(Some(result))
+	}
+
+	fn compile_arguments<W: Write>(
+		def_args: &Vec<types::DefinitionParam>,
+		args: &Vec<Rpn>,
+		return_id: Option<u8>,
+		env: &Environment,
+		type_table: &TypeTable,
+		vtable: &mut VariableTable,
+		str_table: &mut Vec<String>,
+		output: &mut W
+	) -> Result<Vec<String>, CompilerError> {
+		let mut index = 0;
+		let mut arg_ids = Vec::<String>::new();
+
+		for i in def_args {
+			match i {
+				types::DefinitionParam::Type(t) => {
+					let this_arg = compile_expression(args[index].clone(), env, type_table, vtable, str_table, output)?
+						.ok_or(String::from("Expression has no return value"))?;
+
+					if let Type::Primative(t) = type_table.lookup_type(&t)? {
+						if t != vtable.type_of(this_arg) {
+							eprintln!("WARN: argument type does not match definition");
+						}
+					}
+
+					arg_ids.push(this_arg.to_string());
+					index += 1;
+
+					vtable.autofree(this_arg);
+				}
+				types::DefinitionParam::Const(t) => {
+					let this_arg = compile_expression(args[index].clone(), env, type_table, vtable, str_table, output)?
+						.ok_or(String::from("Expression has no return value"))?;
+
+					if let Type::Primative(t) = type_table.lookup_type(&t)? {
+						match &args[index] {
+							Rpn::Signed(value) => match t.size {
+								1 => arg_ids.push(value.to_string()),
+								2 => {
+									arg_ids.push((value & 0xFF).to_string());
+									arg_ids.push((value >> 8).to_string());
+								}
+								3 => {
+									arg_ids.push((value & 0xFF).to_string());
+									arg_ids.push(((value >> 8) & 0xFF).to_string());
+									arg_ids.push(((value >> 16) & 0xFF).to_string());
+								}
+								4 => {
+									arg_ids.push((value & 0xFF).to_string());
+									arg_ids.push(((value >> 8) & 0xFF).to_string());
+									arg_ids.push(((value >> 16) & 0xFF).to_string());
+									arg_ids.push(((value >> 24) & 0xFF).to_string());
+								}
+								_ => panic!("Invalid size {}, only up to 32 bits are supported", t.size),
+							}
+							Rpn::String(text) => {
+								if t.size != 2 {
+									return Err(CompilerError::from("A string must be 16-bit"));
+								}
+
+								let value = format!(".__string{}", str_table.len());
+								str_table.push(text.clone());
+								arg_ids.push(format!("LOW({value}), HIGH({value})"));
+							}
+							_ => {
+								return Err(CompilerError::from("Expression must be constant"))
+							}
+						}
+					} else {
+						return Err(CompilerError::from("Constant arguments may not be structs"))
+					}
+
+					arg_ids.push(this_arg.to_string());
+					index += 1;
+
+					vtable.autofree(this_arg);
+				}
+				types::DefinitionParam::Return(..) => {
+					arg_ids.push(return_id.unwrap().to_string());
+				}
+			}
+		}
+		Ok(arg_ids)
+	}
+
+	fn validate_args(
+		args: &Vec<types::DefinitionParam>,
+		type_table: &TypeTable,
+		vtable: &mut VariableTable,
+	) -> Result<(usize, Option<u8>), CompilerError> {
+		let mut def_arg_count = 0;
+		let mut return_id: Option<u8> = None;
+
+		for i in args {
+			match i {
+				types::DefinitionParam::Type(..) | types::DefinitionParam::Const (..) => {
+					def_arg_count += 1;
+				}
+				types::DefinitionParam::Return(t) => {
+					if return_id != None {
+						return Err(CompilerError::from("A function may only have one return value"));
+					}
+					return_id = Some(vtable.alloc(type_table.lookup_type(&t)?)?);
+				}
+			}
+		}
+
+		Ok((def_arg_count, return_id))
 	}
 
 	match rpn {
@@ -665,20 +775,7 @@ fn compile_expression<W: Write>(
 		Rpn::Call(name, args) => {
 			match env.lookup(&name)? {
 				types::Definition::Def(def) => {
-					let mut def_arg_count = 0;
-					let mut return_id: Option<u8> = None;
-
-					for i in &def.args {
-						match i {
-							types::DefinitionParam::Type(..) => def_arg_count += 1,
-							types::DefinitionParam::Return(t) => {
-								if return_id != None {
-									return Err(CompilerError::from("A function may only have one return value"));
-								}
-								return_id = Some(vtable.alloc(type_table.lookup_type(&t)?)?);
-							}
-						}
-					}
+					let (def_arg_count, return_id) = validate_args(&def.args, type_table, vtable)?;
 
 					if args.len() > def_arg_count {
 						return Err(CompilerError::from("Too many arguments"));
@@ -686,29 +783,17 @@ fn compile_expression<W: Write>(
 						return Err(CompilerError::from("Not enough arguments"));
 					}
 
-					let mut arg_ids = Vec::<u8>::new();
-					let mut index = 0;
+					let arg_ids = compile_arguments(
+						&def.args,
+						&args,
+						return_id,
+						env,
+						type_table,
+						vtable,
+						str_table,
+						output
+					)?;
 
-					for i in &def.args {
-						match i {
-							types::DefinitionParam::Type(t) => {
-								let this_arg = compile_expression(args[index].clone(), env, type_table, vtable, str_table, output)?
-									.ok_or(String::from("Expression has no return value"))?;
-
-								if let Type::Primative(t) = type_table.lookup_type(&t)? {
-									if t != vtable.type_of(this_arg) {
-										eprintln!("WARN: argument type does not match definition");
-									}
-								}
-
-								arg_ids.push(this_arg);
-								index += 1;
-
-								vtable.autofree(this_arg);
-							}
-							types::DefinitionParam::Return(..) => arg_ids.push(return_id.unwrap()),
-						}
-					}
 					write!(output, "\tdb {}", env.expand(&name)?)?;
 					for i in arg_ids {
 						write!(output, ", {i}")?;
@@ -717,26 +802,13 @@ fn compile_expression<W: Write>(
 
 					Ok(return_id)
 				}
-				types::Definition::Alias(alias) => {
+				types::Definition::Alias(def) => {
 					enum AliasVariant {
 						ArgId(usize),
 						ExpressionId(u8),
 					}
 
-					let mut def_arg_count = 0;
-					let mut return_id: Option<u8> = None;
-
-					for i in &alias.args {
-						match i {
-							types::DefinitionParam::Type(..) => def_arg_count += 1,
-							types::DefinitionParam::Return(t) => {
-								if return_id != None {
-									return Err(CompilerError::from("A function may only have one return value"));
-								}
-								return_id = Some(vtable.alloc(type_table.lookup_type(&t)?)?);
-							}
-						}
-					}
+					let (def_arg_count, return_id) = validate_args(&def.args, type_table, vtable)?;
 
 					if args.len() > def_arg_count {
 						return Err(CompilerError::from("Too many arguments"));
@@ -744,30 +816,20 @@ fn compile_expression<W: Write>(
 						return Err(CompilerError::from("Not enough arguments"));
 					}
 
-					let mut arg_ids = Vec::<u8>::new();
+					let arg_ids = compile_arguments(
+						&def.args,
+						&args,
+						return_id,
+						env,
+						type_table,
+						vtable,
+						str_table,
+						output
+					)?;
+
 					let mut alias_ids = Vec::<AliasVariant>::new();
-					let mut index = 0;
 
-					for i in &alias.args {
-						match i {
-							types::DefinitionParam::Type(t) => {
-								let this_arg = compile_expression(args[index].clone(), env, type_table, vtable, str_table, output)?
-									.ok_or(String::from("Expression has no return value"))?;
-
-								if type_table.lookup_primative(&t)? != vtable.type_of(this_arg) {
-									eprintln!("WARN: argument type does not match definition");
-								}
-
-								arg_ids.push(this_arg);
-								index += 1;
-
-								vtable.autofree(this_arg);
-							}
-							types::DefinitionParam::Return(..) => arg_ids.push(return_id.unwrap()),
-						}
-					}
-
-					for i in &alias.target_args {
+					for i in &def.target_args {
 						match i {
 							types::AliasParam::ArgId(index) => alias_ids.push(AliasVariant::ArgId(*index)),
 							types::AliasParam::Expression(rpn) => {
@@ -795,21 +857,8 @@ fn compile_expression<W: Write>(
 
 					Ok(return_id)
 				}
-				types::Definition::Macro(mac) => {
-					let mut def_arg_count = 0;
-					let mut return_id: Option<u8> = None;
-
-					for i in &mac.args {
-						match i {
-							types::DefinitionParam::Type(..) => def_arg_count += 1,
-							types::DefinitionParam::Return(t) => {
-								if return_id != None {
-									return Err(CompilerError::from("A function may only have one return value"));
-								}
-								return_id = Some(vtable.alloc(type_table.lookup_type(&t)?)?);
-							}
-						}
-					}
+				types::Definition::Macro(def) => {
+					let (def_arg_count, return_id) = validate_args(&def.args, type_table, vtable)?;
 
 					if args.len() > def_arg_count {
 						return Err(CompilerError::from("Too many arguments"));
@@ -817,29 +866,18 @@ fn compile_expression<W: Write>(
 						return Err(CompilerError::from("Not enough arguments"));
 					}
 
-					let mut arg_ids = Vec::<u8>::new();
-					let mut index = 0;
+					let arg_ids = compile_arguments(
+						&def.args,
+						&args,
+						return_id,
+						env,
+						type_table,
+						vtable,
+						str_table,
+						output
+					)?;
 
-					for i in &mac.args {
-						match i {
-							types::DefinitionParam::Type(t) => {
-								let this_arg = compile_expression(args[index].clone(), env, type_table, vtable, str_table, output)?
-									.ok_or(String::from("Expression has no return value"))?;
-
-								if type_table.lookup_primative(&t)? != vtable.type_of(this_arg) {
-									eprintln!("WARN: argument type does not match definition");
-								}
-
-								arg_ids.push(this_arg);
-								index += 1;
-
-								vtable.autofree(this_arg);
-							}
-							types::DefinitionParam::Return(..) => arg_ids.push(return_id.unwrap()),
-						}
-					}
-
-					write!(output, "\t{}", mac.target)?;
+					write!(output, "\t{}", def.target)?;
 					for i in arg_ids {
 						write!(output, " {i},")?;
 					}
@@ -857,7 +895,7 @@ fn compile_expression<W: Write>(
 			let result = vtable.alloc(Type::Primative(operand_type))?;
 			// TODO: make opcodes consider operand size.
 			writeln!(output, "\tdb {}, {zero}, $0", env.expand(&format!("put_{operand_type}"))?)?;
-			writeln!(output, "\tdb {}, {result}, {zero}, {operand}", env.expand(&format!("sub_{operand_type}"))?)?;
+			writeln!(output, "\tdb {}, {zero}, {operand}, {result}", env.expand(&format!("sub_{operand_type}"))?)?;
 
 			vtable.free(zero);
 			vtable.autofree(operand);
@@ -872,7 +910,7 @@ fn compile_expression<W: Write>(
 			let ff = vtable.alloc(Type::Primative(operand_type))?;
 			let result = vtable.alloc(Type::Primative(operand_type))?;
 			writeln!(output, "\tdb {}, {ff}, $FF", env.expand(&format!("put_{operand_type}"))?)?;
-			writeln!(output, "\tdb {}, {result}, {operand}, {ff}", env.expand(&format!("xor_{operand_type}"))?)?;
+			writeln!(output, "\tdb {}, {operand}, {ff}, {result}", env.expand(&format!("xor_{operand_type}"))?)?;
 
 			vtable.free(ff);
 			vtable.autofree(operand);
@@ -988,7 +1026,7 @@ fn compile_statement<W: Write>(
 			writeln!(
 				output,
 				"\tdb {}, {condition_result}, LOW(.__else{l}), HIGH(.__else{l})",
-				env.expand("goto_if_false")?
+				env.expand("jmp_if_false")?
 			)?;
 
 			vtable.autofree(condition_result);
@@ -1003,7 +1041,7 @@ fn compile_statement<W: Write>(
 				writeln!(
 					output,
 					"\tdb {}, LOW(.__end{l}), HIGH(.__end{l})",
-					env.expand("goto")?
+					env.expand("jmp")?
 				)?;
 			}
 
@@ -1027,7 +1065,7 @@ fn compile_statement<W: Write>(
 			writeln!(
 				output,
 				"\tdb {}, LOW(.__end{l}), HIGH(.__end{l})",
-				env.expand("goto")?
+				env.expand("jmp")?
 			)?;
 
 			writeln!(output, ".__while{l}")?;
@@ -1046,7 +1084,7 @@ fn compile_statement<W: Write>(
 			writeln!(
 				output,
 				"\tdb {}, {condition_result}, LOW(.__while{l}), HIGH(.__while{l})",
-				env.expand("goto_if_true")?
+				env.expand("jmp_if_true")?
 			)?;
 
 			vtable.autofree(condition_result);
@@ -1071,7 +1109,7 @@ fn compile_statement<W: Write>(
 			writeln!(
 				output,
 				"\tdb {}, {condition_result}, LOW(.__while{l}), HIGH(.__while{l})",
-				env.expand("goto_if_true")?
+				env.expand("jmp_if_true")?
 			)?;
 
 			vtable.autofree(condition_result);
@@ -1087,7 +1125,7 @@ fn compile_statement<W: Write>(
 			writeln!(
 				output,
 				"\tdb {}, LOW(.__end{l}), HIGH(.__end{l})",
-				env.expand("goto")?
+				env.expand("jmp")?
 			)?;
 
 			writeln!(output, ".__for{l}")?;
@@ -1109,7 +1147,7 @@ fn compile_statement<W: Write>(
 			writeln!(
 				output,
 				"\tdb {}, {condition_result}, LOW(.__for{l}), HIGH(.__for{l})",
-				env.expand("goto_if_true")?
+				env.expand("jmp_if_true")?
 			)?;
 
 			vtable.autofree(condition_result);
@@ -1141,7 +1179,7 @@ fn compile_statement<W: Write>(
 
 			writeln!(
 				output,
-				"\tdb {}, {repeat_index}, {repeat_index}, {scratch}",
+				"\tdb {}, {repeat_index}, {scratch}, {repeat_index}",
 				env.expand("sub_u8")?
 			)?;
 			
@@ -1155,14 +1193,14 @@ fn compile_statement<W: Write>(
 
 			writeln!(
 				output,
-				"\tdb {}, {scratch}, {repeat_index}, {scratch}",
+				"\tdb {}, {repeat_index}, {scratch}, {scratch}",
 				env.expand("equ_u8")?
 			)?;
 
 			writeln!(
 				output,
 				"\tdb {}, {scratch}, LOW(.__repeat{l}), HIGH(.__repeat{l})",
-				env.expand("goto_if_false")?
+				env.expand("jmp_if_false")?
 			)?;
 
 			vtable.autofree(scratch);
@@ -1183,7 +1221,7 @@ fn compile_statement<W: Write>(
 			writeln!(
 				output,
 				"\tdb {}, LOW(.__loop{l}), HIGH(.__loop{l})",
-				env.expand("goto")?
+				env.expand("jmp")?
 			)?;
 			
 			writeln!(output, ".__end{l}")?;

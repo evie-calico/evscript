@@ -40,5 +40,5 @@ env npc {
 }
 
 script Main {
-	u8 i = npc_lock();
+	return;
 }

@@ -17,7 +17,7 @@ match {
 	r#""([^"]|\.)*""#,
 	r"-?[0-9]+",
 	";", ",",
-	"env", "use", "include", "def", "alias", "macro", "pool", "terminator",
+	"env", "use", "include", "def", "alias", "macro", "pool", "const",
 	"return", "yield", "typedef", "struct",
 	"if", "else", "while", "do", "for", "repeat", "loop",
 	r"#asm[^#]*#end",
@@ -85,12 +85,13 @@ Statement: Statement = {
 	<start:@L> "for" <pro:Statement> <cond:Expr> ";" <epi:Statement> <end:@R> "{" <contents:Statement*> "}" => Statement { t: StatementType::For(Box::new(pro), cond, Box::new(epi), contents), start, end },
 	<start:@L> "repeat" <cond:Expr> <end:@R> "{" <contents:Statement*> "}" => Statement { t: StatementType::Repeat(cond, contents), start, end },
 	<start:@L> "loop" <end:@R> "{" <contents:Statement*> "}" => Statement { t: StatementType::Loop(contents), start, end },
-	<start:@L> "return" <end:@R> ";" => Statement { t: StatementType::Expression(Rpn::Call(String::from("return"), vec![])), start, end },
-	<start:@L> "yield" <end:@R> ";" => Statement { t: StatementType::Expression(Rpn::Call(String::from("yield"), vec![])), start, end },
+	<start:@L> "return" <end:@R> ";" => Statement { t: StatementType::Expression(Rpn::Call(String::from("ret"), vec![])), start, end },
+	<start:@L> "yield" <end:@R> ";" => Statement { t: StatementType::Expression(Rpn::Call(String::from("yld"), vec![])), start, end },
 }
 
 DefinitionParam: DefinitionParam = {
 	"return" <i:Iden> => DefinitionParam::Return(i),
+	"const" <i:Iden> => DefinitionParam::Const(i),
 	Iden => DefinitionParam::Type(<>),
 }
 

@@ -86,6 +86,7 @@ pub struct Alias {
 #[derive(Debug, Clone)]
 pub enum DefinitionParam {
 	Return(String),
+	Const(String),
 	Type(String),
 }
 
