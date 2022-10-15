@@ -989,7 +989,7 @@ fn compile_statement<W: Write>(
 		}
 		StatementType::DeclareAssign(t, name, rpn) => {
 			match rpn {
-				Rpn::Variable(name) => {
+				Rpn::Variable(source_name) => {
 					// Create a new variable
 					let dest_type = match type_table.lookup_primative(&t) {
 						Ok(t) => t,
@@ -998,15 +998,15 @@ fn compile_statement<W: Write>(
 						)))
 					};
 					let dest = vtable.alloc(Type::Primative(dest_type))?;
-					*vtable.name_of(dest) = Some(name.clone());
-
-					let source = vtable.lookup(&name)?;
+					let source = vtable.lookup(&source_name)?;
 
 					writeln!(
 						output,
 						"\tdb {}, {dest}, {source}",
 						env.expand(&format!("mov_{dest_type}"))?
 					)?;
+
+					*vtable.name_of(dest) = Some(name);
 
 					vtable.autofree(source);
 				}
@@ -1157,8 +1157,15 @@ fn compile_statement<W: Write>(
 			*label_index += 1;
 
 			// Execute prologue
-			let repeat_index = compile_expression(repeat_count, env, type_table, vtable, str_table, output)?
+			let mut repeat_index = compile_expression(repeat_count, env, type_table, vtable, str_table, output)?
 				.ok_or(statement_error(String::from("Expression has no return value")))?;
+
+			if vtable.name_of(repeat_index).is_some() {
+				let dest_type = vtable.type_of(repeat_index);
+				let unique_index = vtable.alloc(Type::Primative(dest_type))?;
+				writeln!(output, "\tdb {}, {unique_index}, {repeat_index}", env.expand(&format!("mov_{dest_type}"))?)?;
+				repeat_index = unique_index;
+			}
 
 			writeln!(output, ".__repeat{l}")?;
 
