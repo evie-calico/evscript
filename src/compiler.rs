@@ -340,8 +340,6 @@ impl VariableTable {
 			if let None = var.name {
 				self.variables[i as usize] = None;
 			}
-		} else {
-			panic!("Variable {i} does not exist");
 		}
 	}
 
@@ -371,7 +369,7 @@ impl VariableTable {
 							if variable_name == components[0] {
 								// Now that we've found a struct, we'll traverse it to find the member.
 								let mut comp_i = 1;
-								while comp_i < components.len() {
+								'next_component: while comp_i < components.len() {
 									let mut offset = 0;
 
 									for (member_name, member) in struct_type {
@@ -388,6 +386,7 @@ impl VariableTable {
 														return Ok((i + offset) as u8);
 													} else {
 														comp_i += 1;
+														continue 'next_component;
 													}
 												}
 											}
@@ -395,8 +394,9 @@ impl VariableTable {
 
 										offset += member.size() as usize;
 									}
+									break;
 								}
-								return Err(format!("Cannot find member of {name} in {variable_name}"))
+								return Err(format!("{name} is not a member of {variable_name}"))
 							}
 						} else {
 							return Err(format!("{} is not a struct", components[0]));
