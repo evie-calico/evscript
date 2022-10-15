@@ -1,11 +1,90 @@
 use crate::types;
 use crate::types::Rpn;
+use crate::types::Statement;
+use crate::types::StatementType;
 
 use std::collections::HashMap;
+use std::convert::From;
 use std::fmt;
 use std::fs::read_to_string;
 use std::io::Write;
 use std::process::exit;
+
+pub struct CompilerError {
+	pub msg: String,
+	pub start: Option<usize>,
+	pub end: Option<usize>,
+}
+
+impl From<&str> for CompilerError {
+	fn from(msg: &str) -> Self {
+		CompilerError {
+			msg: String::from(msg),
+			start: None,
+			end: None,
+		}
+	}
+}
+
+impl From<String> for CompilerError {
+	fn from(msg: String) -> Self {
+		CompilerError {
+			msg,
+			start: None,
+			end: None,
+		}
+	}
+}
+
+impl From<std::io::Error> for CompilerError {
+	fn from(msg: std::io::Error) -> Self {
+		CompilerError {
+			msg: msg.to_string(),
+			start: None,
+			end: None,
+		}
+	}
+}
+
+impl fmt::Display for CompilerError {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		if let Some(start) = self.start {
+			if let Some(end) = self.end {
+				write!(f, "{start}-{end} {}", self.msg)
+			} else {
+				write!(f, "{start} {}", self.msg)
+			}
+		} else {
+			write!(f, " {}", self.msg)
+		}
+	}
+}
+
+impl CompilerError {
+	pub fn get_range(&self) -> Option<std::ops::Range<usize>> {
+		if let Some(start) = self.start {
+			if let Some(end) = self.end {
+				Some(start..end)
+			} else {
+				Some(start..start)
+			}
+		} else {
+			None
+		}
+	}
+}
+
+pub struct CompilerOptions {
+	pub report_usage: bool,
+}
+
+impl CompilerOptions {
+	pub fn new() -> CompilerOptions {
+		CompilerOptions {
+			report_usage: false,
+		}
+	}
+}
 
 #[derive(Debug)]
 struct Environment {
@@ -330,7 +409,7 @@ impl VariableTable {
 			}
 		}
 
-		Err(format!("Variable {name} does not exist in {self:#?}"))
+		Err(format!("Variable {name} does not exist"))
 	}
 
 	fn name_of(&mut self, i: u8) -> &mut Option<String> {
@@ -432,7 +511,7 @@ fn compile_environment<W: Write>(
 	env: types::Environment,
 	environment_table: &EnvironmentTable,
 	output: &mut W,
-) -> Result<Environment, String> {
+) -> Result<Environment, CompilerError> {
 	let mut compiled_env = Environment {
 		name: String::from(this_name),
 		definitions: HashMap::<String, types::Definition>::new(),
@@ -442,11 +521,15 @@ fn compile_environment<W: Write>(
 	let mut bytecode_index: u8 = 0;
 
 	for i in env.contents {
-		match i {
-			types::Statement::Use(name) => {
+		match i.t {
+			StatementType::Use(name) => {
 				let other_env = match environment_table.get(&name) {
 					Some(other_env) => other_env,
-					None => return Err(format!("Environment {name} does not exist")),
+					None => return Err(CompilerError {
+						start: Some(i.start),
+						end: Some(i.end),
+						msg: format!("Environment {name} does not exist")
+					}),
 				};
 
 				let mut greatest_bytecode = bytecode_index;
@@ -462,8 +545,7 @@ fn compile_environment<W: Write>(
 						types::Definition::Def(ref mut sub_def) => {
 							sub_def.bytecode = bytecode_index.checked_add(sub_def.bytecode)
 								.ok_or(format!("Hit bytecode limit in environment {this_name}"))?;
-							writeln!(output, "def {this_name}@{def_name} equ {}", sub_def.bytecode)
-								.map_err(|err| err.to_string())?;
+							writeln!(output, "def {this_name}@{def_name} equ {}", sub_def.bytecode)?;
 							if sub_def.bytecode > greatest_bytecode {
 								greatest_bytecode = sub_def.bytecode;
 							}
@@ -476,14 +558,13 @@ fn compile_environment<W: Write>(
 
 				bytecode_index = greatest_bytecode;
 			}
-			types::Statement::Definition(name, mut def) => {
+			StatementType::Definition(name, mut def) => {
 				if compiled_env.definitions.get(&name).is_some() {
 					eprintln!("WARN: duplicate definition of {name}");
 				}
 				match def {
 					types::Definition::Def(ref mut sub_def) => {
-						writeln!(output, "def {this_name}@{name} equ {bytecode_index}")
-							.map_err(|err| err.to_string())?;
+						writeln!(output, "def {this_name}@{name} equ {bytecode_index}")?;
 						sub_def.bytecode = bytecode_index;
 						bytecode_index = bytecode_index.checked_add(1)
 							.ok_or(format!("Hit bytecode limit in environment {this_name}"))?;
@@ -493,18 +574,18 @@ fn compile_environment<W: Write>(
 
 				compiled_env.definitions.insert(name.clone(), def);
 			}
-			types::Statement::Pool(expression) => {
+			StatementType::Pool(expression) => {
 				let pool_size = expression.eval_const()?;
 
 				compiled_env.pool = if pool_size < 0 {
-					return Err(String::from("Pool size may not be negative"));
+					return Err(CompilerError::from("Pool size may not be negative"));
 				} else if pool_size > 256 {
-					return Err(String::from("Pool size is limited to 256 bytes"));
+					return Err(CompilerError::from("Pool size is limited to 256 bytes"));
 				} else {
 					pool_size as u16
 				};
 			}
-			_ => return Err(format!("Statement {i:?} is not allowed within environments.")),
+			_ => return Err(CompilerError::from(format!("StatementType {i:?} is not allowed within environments."))),
 		}
 	}
 
@@ -519,7 +600,7 @@ fn compile_expression<W: Write>(
 	vtable: &mut VariableTable,
 	str_table: &mut Vec<String>,
 	output: &mut W
-) -> Result<Option<u8>, String> {
+) -> Result<Option<u8>, CompilerError> {
 	fn binary_operation<W: Write>(
 		l: Box<Rpn>,
 		op: &str,
@@ -529,7 +610,7 @@ fn compile_expression<W: Write>(
 		vtable: & mut VariableTable,
 		str_table: &mut Vec<String>,
 		output: &mut W
-	) -> Result<Option<u8>, String> {
+	) -> Result<Option<u8>, CompilerError> {
 		let l = compile_expression(*l, env, type_table, vtable, str_table, output)?
 			.ok_or(String::from("Expression has no return value"))?;
 		let r = compile_expression(*r, env, type_table, vtable, str_table, output)?
@@ -539,8 +620,7 @@ fn compile_expression<W: Write>(
 		let result = vtable.alloc(Type::Primative(result_type))?;
 		// TODO: make opcodes consider operation size.
 
-		writeln!(output, "\tdb {}, {result}, {l}, {r}", env.expand(&format!("{op}_{result_type}"))?)
-			.map_err(|err| err.to_string())?;
+		writeln!(output, "\tdb {}, {result}, {l}, {r}", env.expand(&format!("{op}_{result_type}"))?)?;
 
 		vtable.autofree(l);
 		vtable.autofree(r);
@@ -557,8 +637,7 @@ fn compile_expression<W: Write>(
 					let result_type = Primative { signed: false, size: 1 };
 					let result = vtable.alloc(Type::Primative(result_type))?;
 					// put (result), value
-					writeln!(output, "\tdb {}, {result}, {name}", env.expand(&format!("put_{result_type}"))?)
-						.map_err(|err| err.to_string())?;
+					writeln!(output, "\tdb {}, {result}, {name}", env.expand(&format!("put_{result_type}"))?)?;
 					Ok(Some(result))
 				}
 			}
@@ -570,8 +649,7 @@ fn compile_expression<W: Write>(
 			let result_type = Primative { signed: false, size: 1 };
 			let result = vtable.alloc(Type::Primative(result_type))?;
 			// put (result), value
-			writeln!(output, "\tdb {}, {result}, ${value:X}", env.expand(&format!("put_{result_type}"))?)
-				.map_err(|err| err.to_string())?;
+			writeln!(output, "\tdb {}, {result}, ${value:X}", env.expand(&format!("put_{result_type}"))?)?;
 			Ok(Some(result))
 		}
 		Rpn::String(string) => {
@@ -579,10 +657,8 @@ fn compile_expression<W: Write>(
 			let result = vtable.alloc(Type::Primative(result_type))?;
 			let value = format!(".__string{}", str_table.len());
 			// TODO: make this a 16-bit put
-			writeln!(output, "\tdb {}, {result}, LOW({value})", env.expand(&format!("put_u8"))?)
-				.map_err(|err| err.to_string())?;
-			writeln!(output, "\tdb {}, {result} + 1, HIGH({value})", env.expand(&format!("put_u8"))?)
-				.map_err(|err| err.to_string())?;
+			writeln!(output, "\tdb {}, {result}, LOW({value})", env.expand(&format!("put_u8"))?)?;
+			writeln!(output, "\tdb {}, {result} + 1, HIGH({value})", env.expand(&format!("put_u8"))?)?;
 			str_table.push(string);
 			Ok(Some(result))
 		}
@@ -597,7 +673,7 @@ fn compile_expression<W: Write>(
 							types::DefinitionParam::Type(..) => def_arg_count += 1,
 							types::DefinitionParam::Return(t) => {
 								if return_id != None {
-									return Err(String::from("A function may only have one return value"));
+									return Err(CompilerError::from("A function may only have one return value"));
 								}
 								return_id = Some(vtable.alloc(type_table.lookup_type(&t)?)?);
 							}
@@ -605,9 +681,9 @@ fn compile_expression<W: Write>(
 					}
 
 					if args.len() > def_arg_count {
-						return Err(String::from("Too many arguments"));
+						return Err(CompilerError::from("Too many arguments"));
 					} else if args.len() < def_arg_count {
-						return Err(String::from("Not enough arguments"));
+						return Err(CompilerError::from("Not enough arguments"));
 					}
 
 					let mut arg_ids = Vec::<u8>::new();
@@ -619,8 +695,10 @@ fn compile_expression<W: Write>(
 								let this_arg = compile_expression(args[index].clone(), env, type_table, vtable, str_table, output)?
 									.ok_or(String::from("Expression has no return value"))?;
 
-								if type_table.lookup_primative(&t)? != vtable.type_of(this_arg) {
-									eprintln!("WARN: argument type does not match definition");
+								if let Type::Primative(t) = type_table.lookup_type(&t)? {
+									if t != vtable.type_of(this_arg) {
+										eprintln!("WARN: argument type does not match definition");
+									}
 								}
 
 								arg_ids.push(this_arg);
@@ -631,14 +709,11 @@ fn compile_expression<W: Write>(
 							types::DefinitionParam::Return(..) => arg_ids.push(return_id.unwrap()),
 						}
 					}
-					write!(output, "\tdb {}", env.expand(&name)?)
-						.map_err(|err| err.to_string())?;
+					write!(output, "\tdb {}", env.expand(&name)?)?;
 					for i in arg_ids {
-						write!(output, ", {i}")
-							.map_err(|err| err.to_string())?;
+						write!(output, ", {i}")?;
 					}
-					writeln!(output, "")
-						.map_err(|err| err.to_string())?;
+					writeln!(output, "")?;
 
 					Ok(return_id)
 				}
@@ -656,7 +731,7 @@ fn compile_expression<W: Write>(
 							types::DefinitionParam::Type(..) => def_arg_count += 1,
 							types::DefinitionParam::Return(t) => {
 								if return_id != None {
-									return Err(String::from("A function may only have one return value"));
+									return Err(CompilerError::from("A function may only have one return value"));
 								}
 								return_id = Some(vtable.alloc(type_table.lookup_type(&t)?)?);
 							}
@@ -664,9 +739,9 @@ fn compile_expression<W: Write>(
 					}
 
 					if args.len() > def_arg_count {
-						return Err(String::from("Too many arguments"));
+						return Err(CompilerError::from("Too many arguments"));
 					} else if args.len() < def_arg_count {
-						return Err(String::from("Not enough arguments"));
+						return Err(CompilerError::from("Not enough arguments"));
 					}
 
 					let mut arg_ids = Vec::<u8>::new();
@@ -704,23 +779,19 @@ fn compile_expression<W: Write>(
 						}
 					}
 
-					write!(output, "\tdb {}", env.expand(&name)?)
-						.map_err(|err| err.to_string())?;
+					write!(output, "\tdb {}", env.expand(&name)?)?;
 					for i in alias_ids {
 						match i {
-							AliasVariant::ExpressionId(index) => write!(output, ", {index}")
-								.map_err(|err| err.to_string())?,
+							AliasVariant::ExpressionId(index) => write!(output, ", {index}")?,
 							AliasVariant::ArgId(index) => {
 								if index > arg_ids.len() {
-									return Err(format!("Argument ID is too large ({index})"));
+									return Err(CompilerError::from(format!("Argument ID is too large ({index})")));
 								}
-								write!(output, ", {}", arg_ids[index - 1])
-									.map_err(|err| err.to_string())?;
+								write!(output, ", {}", arg_ids[index - 1])?;
 							}
 						}
 					}
-					writeln!(output, "")
-						.map_err(|err| err.to_string())?;
+					writeln!(output, "")?;
 
 					Ok(return_id)
 				}
@@ -733,7 +804,7 @@ fn compile_expression<W: Write>(
 							types::DefinitionParam::Type(..) => def_arg_count += 1,
 							types::DefinitionParam::Return(t) => {
 								if return_id != None {
-									return Err(String::from("A function may only have one return value"));
+									return Err(CompilerError::from("A function may only have one return value"));
 								}
 								return_id = Some(vtable.alloc(type_table.lookup_type(&t)?)?);
 							}
@@ -741,9 +812,9 @@ fn compile_expression<W: Write>(
 					}
 
 					if args.len() > def_arg_count {
-						return Err(String::from("Too many arguments"));
+						return Err(CompilerError::from("Too many arguments"));
 					} else if args.len() < def_arg_count {
-						return Err(String::from("Not enough arguments"));
+						return Err(CompilerError::from("Not enough arguments"));
 					}
 
 					let mut arg_ids = Vec::<u8>::new();
@@ -768,14 +839,11 @@ fn compile_expression<W: Write>(
 						}
 					}
 
-					write!(output, "\t{}", mac.target)
-						.map_err(|err| err.to_string())?;
+					write!(output, "\t{}", mac.target)?;
 					for i in arg_ids {
-						write!(output, " {i},")
-							.map_err(|err| err.to_string())?;
+						write!(output, " {i},")?;
 					}
-					writeln!(output, "")
-						.map_err(|err| err.to_string())?;
+					writeln!(output, "")?;
 
 					Ok(return_id)
 				}
@@ -788,10 +856,8 @@ fn compile_expression<W: Write>(
 			let zero = vtable.alloc(Type::Primative(operand_type))?;
 			let result = vtable.alloc(Type::Primative(operand_type))?;
 			// TODO: make opcodes consider operand size.
-			writeln!(output, "\tdb {}, {zero}, $0", env.expand(&format!("put_{operand_type}"))?)
-				.map_err(|err| err.to_string())?;
-			writeln!(output, "\tdb {}, {result}, {zero}, {operand}", env.expand(&format!("sub_{operand_type}"))?)
-				.map_err(|err| err.to_string())?;
+			writeln!(output, "\tdb {}, {zero}, $0", env.expand(&format!("put_{operand_type}"))?)?;
+			writeln!(output, "\tdb {}, {result}, {zero}, {operand}", env.expand(&format!("sub_{operand_type}"))?)?;
 
 			vtable.free(zero);
 			vtable.autofree(operand);
@@ -805,10 +871,8 @@ fn compile_expression<W: Write>(
 			// TODO: make the default integer type configurable per-environment
 			let ff = vtable.alloc(Type::Primative(operand_type))?;
 			let result = vtable.alloc(Type::Primative(operand_type))?;
-			writeln!(output, "\tdb {}, {ff}, $FF", env.expand(&format!("put_{operand_type}"))?)
-				.map_err(|err| err.to_string())?;
-			writeln!(output, "\tdb {}, {result}, {operand}, {ff}", env.expand(&format!("xor_{operand_type}"))?)
-				.map_err(|err| err.to_string())?;
+			writeln!(output, "\tdb {}, {ff}, $FF", env.expand(&format!("put_{operand_type}"))?)?;
+			writeln!(output, "\tdb {}, {result}, {operand}, {ff}", env.expand(&format!("xor_{operand_type}"))?)?;
 
 			vtable.free(ff);
 			vtable.autofree(operand);
@@ -843,8 +907,7 @@ fn compile_expression<W: Write>(
 			let source = compile_expression(*i, env, type_table, vtable, str_table, output)?
 				.ok_or(String::from("Expression has no return value"))?;
 
-			writeln!(output, "\tdb {}, {dest}, {source}", env.expand(&format!("mov_{dest_type}"))?)
-				.map_err(|err| err.to_string())?;
+			writeln!(output, "\tdb {}, {dest}, {source}", env.expand(&format!("mov_{dest_type}"))?)?;
 
 			vtable.autofree(source);
 
@@ -854,50 +917,71 @@ fn compile_expression<W: Write>(
 }
 
 fn compile_statement<W: Write>(
-	statement: types::Statement,
+	statement: Statement,
 	env: &Environment,
 	type_table: &TypeTable,
 	label_index: &mut u32,
 	vtable: &mut VariableTable,
 	str_table: &mut Vec<String>,
 	output: &mut W
-) -> Result<(), String> {
-	match statement {
-		types::Statement::Expression(rpn) => {
-			compile_expression(rpn, env, type_table, vtable, str_table, output)?;
+) -> Result<(), CompilerError> {
+	// Automatically adds statement.start and statement.end to a compiler error.
+	let statement_error = |msg: String| -> CompilerError {
+		CompilerError {
+			start: Some(statement.start),
+			end: Some(statement.end),
+			msg
 		}
-		types::Statement::Declaration(t, name) => {
+	};
+
+	match statement.t {
+		StatementType::Expression(rpn) => {
+			if let Err(msg) = compile_expression(rpn, env, type_table, vtable, str_table, output) {
+				// TODO: Give Rpn nodes their own location info.
+				return Err(CompilerError {
+					start: Some(statement.start),
+					end: Some(statement.end),
+					msg: msg.to_string(),
+				} );
+			}
+		}
+		StatementType::Declaration(t, name) => {
 			let new_var = vtable.alloc(type_table.lookup_type(&t)?)?;
 			*vtable.name_of(new_var) = Some(name);
 		}
-		types::Statement::DeclareAssign(t, name, rpn) => {
+		StatementType::DeclareAssign(t, name, rpn) => {
 			match rpn {
 				Rpn::Variable(name) => {
 					// Create a new variable
 					let dest_type = match type_table.lookup_primative(&t) {
 						Ok(t) => t,
-						Err(..) => return Err(String::from("Cannot assign to structures, assign to individual members instead"))
+						Err(..) => return Err(statement_error(String::from(
+							"Cannot assign to structures, assign to individual members instead"
+						)))
 					};
 					let dest = vtable.alloc(Type::Primative(dest_type))?;
 					*vtable.name_of(dest) = Some(name.clone());
 
 					let source = vtable.lookup(&name)?;
 
-					writeln!(output, "\tdb {}, {dest}, {source}", env.expand(&format!("mov_{dest_type}"))?)
-						.map_err(|err| err.to_string())?;
+					writeln!(
+						output,
+						"\tdb {}, {dest}, {source}",
+						env.expand(&format!("mov_{dest_type}"))?
+					)?;
 
 					vtable.autofree(source);
 				}
 				_ => {
 					let new_var = compile_expression(rpn, env, type_table, vtable, str_table, output)?
-						.ok_or(String::from("Expression has no return value"))?;
+						.ok_or(statement_error(String::from("Expression has no return value")))?;
 					*vtable.name_of(new_var) = Some(name);
 				}
 			}
 		},
-		types::Statement::If(condition, contents, else_contents) => {
+		StatementType::If(condition, contents, else_contents) => {
 			let condition_result = compile_expression(condition, env, type_table, vtable, str_table, output)?
-				.ok_or(String::from("Expression has no return value"))?;
+				.ok_or(statement_error(String::from("Expression has no return value")))?;
 			let l = *label_index;
 			*label_index += 1;
 
@@ -905,7 +989,7 @@ fn compile_statement<W: Write>(
 				output,
 				"\tdb {}, {condition_result}, LOW(.__else{l}), HIGH(.__else{l})",
 				env.expand("goto_if_false")?
-			).map_err(|err| err.to_string())?;
+			)?;
 
 			vtable.autofree(condition_result);
 
@@ -920,10 +1004,10 @@ fn compile_statement<W: Write>(
 					output,
 					"\tdb {}, LOW(.__end{l}), HIGH(.__end{l})",
 					env.expand("goto")?
-				).map_err(|err| err.to_string())?;
+				)?;
 			}
 
-			writeln!(output, ".__else{l}").map_err(|err| err.to_string())?;
+			writeln!(output, ".__else{l}")?;
 
 			if let Some(else_statements) = else_contents {
 				vtable.push_scope();
@@ -933,9 +1017,9 @@ fn compile_statement<W: Write>(
 				vtable.pop_scope();
 			}
 
-			writeln!(output, ".__end{l}").map_err(|err| err.to_string())?;
+			writeln!(output, ".__end{l}")?;
 		}
-		types::Statement::While(condition, contents) => {
+		StatementType::While(condition, contents) => {
 			let l = *label_index;
 			*label_index += 1;
 
@@ -944,9 +1028,9 @@ fn compile_statement<W: Write>(
 				output,
 				"\tdb {}, LOW(.__end{l}), HIGH(.__end{l})",
 				env.expand("goto")?
-			).map_err(|err| err.to_string())?;
+			)?;
 
-			writeln!(output, ".__while{l}").map_err(|err| err.to_string())?;
+			writeln!(output, ".__while{l}")?;
 
 			vtable.push_scope();
 			for i in contents {
@@ -954,24 +1038,24 @@ fn compile_statement<W: Write>(
 			}
 			vtable.pop_scope();
 			
-			writeln!(output, ".__end{l}").map_err(|err| err.to_string())?;
+			writeln!(output, ".__end{l}")?;
 
 			let condition_result = compile_expression(condition, env, type_table, vtable, str_table, output)?
-				.ok_or(String::from("Expression has no return value"))?;
+				.ok_or(statement_error(String::from("Expression has no return value")))?;
 
 			writeln!(
 				output,
 				"\tdb {}, {condition_result}, LOW(.__while{l}), HIGH(.__while{l})",
 				env.expand("goto_if_true")?
-			).map_err(|err| err.to_string())?;
+			)?;
 
 			vtable.autofree(condition_result);
 		}
-		types::Statement::Do(condition, contents) => {
+		StatementType::Do(condition, contents) => {
 			let l = *label_index;
 			*label_index += 1;
 
-			writeln!(output, ".__while{l}").map_err(|err| err.to_string())?;
+			writeln!(output, ".__while{l}")?;
 
 			vtable.push_scope();
 			for i in contents {
@@ -979,20 +1063,20 @@ fn compile_statement<W: Write>(
 			}
 			vtable.pop_scope();
 			
-			writeln!(output, ".__end{l}").map_err(|err| err.to_string())?;
+			writeln!(output, ".__end{l}")?;
 
 			let condition_result = compile_expression(condition, env, type_table, vtable, str_table, output)?
-				.ok_or(String::from("Expression has no return value"))?;
+				.ok_or(statement_error(String::from("Expression has no return value")))?;
 
 			writeln!(
 				output,
 				"\tdb {}, {condition_result}, LOW(.__while{l}), HIGH(.__while{l})",
 				env.expand("goto_if_true")?
-			).map_err(|err| err.to_string())?;
+			)?;
 
 			vtable.autofree(condition_result);
 		}
-		types::Statement::For(prologue, condition, epilogue, contents) => {
+		StatementType::For(prologue, condition, epilogue, contents) => {
 			let l = *label_index;
 			*label_index += 1;
 
@@ -1004,9 +1088,9 @@ fn compile_statement<W: Write>(
 				output,
 				"\tdb {}, LOW(.__end{l}), HIGH(.__end{l})",
 				env.expand("goto")?
-			).map_err(|err| err.to_string())?;
+			)?;
 
-			writeln!(output, ".__for{l}").map_err(|err| err.to_string())?;
+			writeln!(output, ".__for{l}")?;
 
 			vtable.push_scope();
 			for i in contents {
@@ -1017,28 +1101,28 @@ fn compile_statement<W: Write>(
 			// Execute epliogue before checking condition
 			compile_statement(*epilogue, env, type_table, label_index, vtable, str_table, output)?;
 			
-			writeln!(output, ".__end{l}").map_err(|err| err.to_string())?;
+			writeln!(output, ".__end{l}")?;
 
 			let condition_result = compile_expression(condition, env, type_table, vtable, str_table, output)?
-				.ok_or(String::from("Expression has no return value"))?;
+				.ok_or(statement_error(String::from("Expression has no return value")))?;
 
 			writeln!(
 				output,
 				"\tdb {}, {condition_result}, LOW(.__for{l}), HIGH(.__for{l})",
 				env.expand("goto_if_true")?
-			).map_err(|err| err.to_string())?;
+			)?;
 
 			vtable.autofree(condition_result);
 		}
-		types::Statement::Repeat(repeat_count, contents) => {
+		StatementType::Repeat(repeat_count, contents) => {
 			let l = *label_index;
 			*label_index += 1;
 
 			// Execute prologue
 			let repeat_index = compile_expression(repeat_count, env, type_table, vtable, str_table, output)?
-				.ok_or(String::from("Expression has no return value"))?;
+				.ok_or(statement_error(String::from("Expression has no return value")))?;
 
-			writeln!(output, ".__repeat{l}").map_err(|err| err.to_string())?;
+			writeln!(output, ".__repeat{l}")?;
 
 			vtable.push_scope();
 			for i in contents {
@@ -1053,42 +1137,42 @@ fn compile_statement<W: Write>(
 				output,
 				"\tdb {}, {scratch}, $1",
 				env.expand("put_u8")?
-			).map_err(|err| err.to_string())?;
+			)?;
 
 			writeln!(
 				output,
 				"\tdb {}, {repeat_index}, {repeat_index}, {scratch}",
 				env.expand("sub_u8")?
-			).map_err(|err| err.to_string())?;
+			)?;
 			
-			writeln!(output, ".__end{l}").map_err(|err| err.to_string())?;
+			writeln!(output, ".__end{l}")?;
 
 			writeln!(
 				output,
 				"\tdb {}, {scratch}, $0",
 				env.expand("put_u8")?
-			).map_err(|err| err.to_string())?;
+			)?;
 
 			writeln!(
 				output,
 				"\tdb {}, {scratch}, {repeat_index}, {scratch}",
 				env.expand("equ_u8")?
-			).map_err(|err| err.to_string())?;
+			)?;
 
 			writeln!(
 				output,
 				"\tdb {}, {scratch}, LOW(.__repeat{l}), HIGH(.__repeat{l})",
 				env.expand("goto_if_false")?
-			).map_err(|err| err.to_string())?;
+			)?;
 
 			vtable.autofree(scratch);
 			vtable.autofree(repeat_index);
 		}
-		types::Statement::Loop(contents) => {
+		StatementType::Loop(contents) => {
 			let l = *label_index;
 			*label_index += 1;
 
-			writeln!(output, ".__loop{l}").map_err(|err| err.to_string())?;
+			writeln!(output, ".__loop{l}")?;
 
 			vtable.push_scope();
 			for i in contents {
@@ -1100,11 +1184,15 @@ fn compile_statement<W: Write>(
 				output,
 				"\tdb {}, LOW(.__loop{l}), HIGH(.__loop{l})",
 				env.expand("goto")?
-			).map_err(|err| err.to_string())?;
+			)?;
 			
-			writeln!(output, ".__end{l}").map_err(|err| err.to_string())?;
+			writeln!(output, ".__end{l}")?;
 		}
-		_ => return Err(format!("{statement:?} not allowed in function")),
+		_ => return Err(CompilerError {
+			start: Some(statement.start),
+			end: Some(statement.end),
+			msg: String::from("Statement not allowed in function"),
+		} ),
 	};
 
 	Ok(())
@@ -1115,35 +1203,38 @@ fn compile_function<W: Write>(
 	func: types::Function,
 	environment_table: &EnvironmentTable,
 	type_table: &TypeTable,
-	output: &mut W
-) -> Result<(), String> {
+	output: &mut W,
+	options: &CompilerOptions,
+) -> Result<(), CompilerError> {
 	let env = match environment_table.get(&func.environment) {
 		Some(env) => env,
-		None => return Err(format!("Environment {} does not exist", func.environment)),
+		None => return Err(CompilerError {
+			start: Some(func.start),
+			end: Some(func.end),
+			msg: format!("Environment {} does not exist", func.environment),			
+		} ),
 	};
 	let mut vtable = VariableTable::new();
 	let mut str_table = Vec::<String>::new();
 	let mut label_index = 0;
 
-	writeln!(output, "\nsection \"{name} evscript fn\", romx\n{name}::")
-		.map_err(|err| err.to_string())?;
+	writeln!(output, "\nsection \"{name} evscript fn\", romx\n{name}::")?;
 
 	for i in func.contents {
 		compile_statement(i, env, type_table, &mut label_index, &mut vtable, &mut str_table, output)?;
 	}
 
-	writeln!(output, "\tdb 0")
-		.map_err(|err| err.to_string())?;
+	writeln!(output, "\tdb 0")?;
 
 	let mut i = 0;
 	while i < str_table.len() {
-		writeln!(output, ".__string{i} db \"{}\", 0", str_table[i])
-			.map_err(|err| err.to_string())?;
+		writeln!(output, ".__string{i} db \"{}\", 0", str_table[i])?;
 		i += 1;
 	}
 
-	// TODO: make this message optional via command-line argument.
-	println!("({name}) Peak usage: {}", vtable.peak_usage);
+	if options.report_usage {
+		println!("({name}) Peak usage: {}", vtable.peak_usage);
+	}
 
 	Ok(())
 }
@@ -1152,8 +1243,9 @@ fn compile_ast<W: Write>(
 	ast: Vec<types::Root>,
 	environment_table: &mut EnvironmentTable,
 	type_table: &mut TypeTable,
-	output: &mut W
-) -> Result<(), String> {
+	output: &mut W,
+	options: &CompilerOptions,
+) -> Result<(), CompilerError> {
 	for i in ast {
 		match i {
 			types::Root::Environment(name, env) => {
@@ -1161,10 +1253,10 @@ fn compile_ast<W: Write>(
 				environment_table.insert(name, new_env);
 			}
 			types::Root::Function(name, func) => {
-				compile_function(&name, func, &environment_table, &type_table, output)?;
+				compile_function(&name, func, &environment_table, &type_table, output, &options)?;
 			}
 			types::Root::Assembly(contents) => {
-				writeln!(output, "{}", contents).map_err(|err| err.to_string())?;
+				writeln!(output, "{}", contents)?;
 			}
 			types::Root::Include(path) => {
 				let input = &match read_to_string(&path) {
@@ -1183,7 +1275,7 @@ fn compile_ast<W: Write>(
 					}
 				};
 
-				if let Err(err) = compile_ast(ast, environment_table, type_table, output) {
+				if let Err(err) = compile_ast(ast, environment_table, type_table, output, options) {
 					eprintln!("{path}: {err}");
 					exit(1);
 				}
@@ -1206,7 +1298,11 @@ fn compile_ast<W: Write>(
 	Ok(())
 }
 
-pub fn compile<W: Write>(ast: Vec<types::Root>, output: &mut W) -> Result<(), String> {
+pub fn compile<W: Write>(
+	ast: Vec<types::Root>,
+	output: &mut W,
+	options: CompilerOptions,
+) -> Result<(), CompilerError> {
 	let mut environment_table = EnvironmentTable::from([
 		(String::from("std"), Environment::std()),
 	]);
@@ -1216,5 +1312,5 @@ pub fn compile<W: Write>(ast: Vec<types::Root>, output: &mut W) -> Result<(), St
 		(String::from("u16"), Type::Primative(Primative { signed: false, size: 2 } )),
 	]) };
 
-	compile_ast(ast, &mut environment_table, &mut type_table, output)
+	compile_ast(ast, &mut environment_table, &mut type_table, output, &options)
 }

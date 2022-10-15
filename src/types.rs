@@ -1,7 +1,14 @@
 use std::vec::Vec;
 
 #[derive(Debug)]
-pub enum Statement {
+pub struct Statement {
+	pub t: StatementType,
+	pub start: usize,
+	pub end: usize,
+}
+
+#[derive(Debug)]
+pub enum StatementType {
 	// Environment statements
 	Use(String),
 	Definition(String, Definition),
@@ -37,7 +44,9 @@ pub struct Environment {
 #[derive(Debug)]
 pub struct Function {
 	pub environment: String,
-	pub contents: Vec<Statement>
+	pub contents: Vec<Statement>,
+	pub start: usize,
+	pub end: usize,
 }
 
 #[derive(Debug)]

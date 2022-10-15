@@ -31,8 +31,8 @@ match {
 pub File = { <Root*> }
 
 Root: Root = {
-	<environment:Iden> <name:Iden> "{" <contents:Statement*> "}" => {
-		Root::Function( name, Function { environment, contents } )
+	<start:@L> <environment:Iden> <name:Iden> <end:@L> "{" <contents:Statement*> "}" => {
+		Root::Function( name, Function { environment, contents, start, end } )
 	},
 	"env" <name:Iden> "{" <contents:Statement*> "}" => {
 		Root::Environment( name, Environment { contents } )
@@ -64,31 +64,29 @@ StructMember: StructMember = {
 }
 
 Statement: Statement = {
-	"def" <name:Iden> "(" <args:Comma<DefinitionParam>> ")" ";" => {
-		Statement::Definition(name, Definition::Def(Def { args, bytecode: 0 }))
+	<start:@L> "def" <name:Iden> "(" <args:Comma<DefinitionParam>> ")" <end:@R> ";" => {
+		Statement { t: StatementType::Definition(name, Definition::Def(Def { args, bytecode: 0 })), start, end }
 	},
-	"alias" <name:Iden> "(" <args:Comma<DefinitionParam>> ")" "=" <target:Iden> "(" <target_args:Comma<AliasParam>> ")" ";" => {
-		Statement::Definition(name, Definition::Alias(Alias { args, target, target_args }))
+	<start:@L> "alias" <name:Iden> "(" <args:Comma<DefinitionParam>> ")" "=" <target:Iden> "(" <target_args:Comma<AliasParam>> ")" <end:@R> ";" => {
+		Statement { t: StatementType::Definition(name, Definition::Alias(Alias { args, target, target_args })), start, end }
 	},
-	"macro" <name:Iden> "(" <args:Comma<DefinitionParam>> ")" "=" <target:Iden> ";" => {
-		Statement::Definition(name, Definition::Macro(Macro { args, target }))
+	<start:@L> "macro" <name:Iden> "(" <args:Comma<DefinitionParam>> ")" "=" <target:Iden> <end:@R> ";" => {
+		Statement { t: StatementType::Definition(name, Definition::Macro(Macro { args, target })), start, end }
 	},
-	"use" <env:Iden> ";" => Statement::Use(env),
-	"pool" "=" <expr:Expr> ";" => Statement::Pool(expr),
-
-	<expr:Expr> ";" => Statement::Expression(expr),
-	<t:Iden> <i:Iden> ";" => Statement::Declaration(t, i),
-	<t:Iden> <l:Iden> "=" <r:Expr> ";" => Statement::DeclareAssign(t, l, r),
+	<start:@L> "use" <env:Iden> <end:@R> ";" => Statement { t: StatementType::Use(env), start, end },
+	<start:@L> "pool" "=" <expr:Expr> <end:@R> ";" => Statement { t: StatementType::Pool(expr), start, end },
+	<start:@L> <expr:Expr> <end:@R> ";" => Statement { t: StatementType::Expression(expr), start, end },
+	<start:@L> <t:Iden> <i:Iden> <end:@R> ";" => Statement { t: StatementType::Declaration(t, i), start, end },
+	<start:@L> <t:Iden> <l:Iden> "=" <r:Expr> <end:@R> ";" => Statement { t: StatementType::DeclareAssign(t, l, r), start, end },
 	Assignment,
 	IfContainer,
-	"while" <cond:Expr> "{" <contents:Statement*> "}" => Statement::While(cond, contents),
-	"do" "{" <contents:Statement*> "}" "while" <cond:Expr> ";" => Statement::Do(cond, contents),
-	"for" <pro:Statement> <cond:Expr> ";" <epi:Statement> "{" <contents:Statement*> "}" => Statement::For(Box::new(pro), cond, Box::new(epi), contents),
-	"repeat" <cond:Expr> "{" <contents:Statement*> "}" => Statement::Repeat(cond, contents),
-	"loop" "{" <contents:Statement*> "}" => Statement::Loop(contents),
-
-	"return" ";" => Statement::Expression(Rpn::Call(String::from("return"), vec![])),
-	"yield" ";" => Statement::Expression(Rpn::Call(String::from("yield"), vec![])),
+	<start:@L> "while" <cond:Expr> <end:@R> "{" <contents:Statement*> "}" => Statement { t: StatementType::While(cond, contents), start, end },
+	"do" "{" <contents:Statement*> "}" <start:@L> "while" <cond:Expr> <end:@R> ";" => Statement { t: StatementType::Do(cond, contents), start, end },
+	<start:@L> "for" <pro:Statement> <cond:Expr> ";" <epi:Statement> <end:@R> "{" <contents:Statement*> "}" => Statement { t: StatementType::For(Box::new(pro), cond, Box::new(epi), contents), start, end },
+	<start:@L> "repeat" <cond:Expr> <end:@R> "{" <contents:Statement*> "}" => Statement { t: StatementType::Repeat(cond, contents), start, end },
+	<start:@L> "loop" <end:@R> "{" <contents:Statement*> "}" => Statement { t: StatementType::Loop(contents), start, end },
+	<start:@L> "return" <end:@R> ";" => Statement { t: StatementType::Expression(Rpn::Call(String::from("return"), vec![])), start, end },
+	<start:@L> "yield" <end:@R> ";" => Statement { t: StatementType::Expression(Rpn::Call(String::from("yield"), vec![])), start, end },
 }
 
 DefinitionParam: DefinitionParam = {
@@ -105,23 +103,23 @@ AliasParam: AliasParam = {
 }
 
 IfContainer: Statement = {
-	"if" <cond:Expr> "{" <contents:Statement*> "}" => Statement::If(cond, contents, None),
-	"if" <cond:Expr> "{" <contents:Statement*> "}" "else" "{" <else_contents:Statement*> "}" => Statement::If(cond, contents, Some(else_contents)),
-	"if" <cond:Expr> "{" <contents:Statement*> "}" "else" <else_contents:IfContainer> => Statement::If(cond, contents, Some(vec![else_contents])),
+	<start:@L> "if" <cond:Expr> <end:@R> "{" <contents:Statement*> "}" => Statement { t: StatementType::If(cond, contents, None), start, end },
+	<start:@L> "if" <cond:Expr> <end:@R> "{" <contents:Statement*> "}" "else" "{" <else_contents:Statement*> "}" => Statement { t: StatementType::If(cond, contents, Some(else_contents)), start, end },
+	<start:@L> "if" <cond:Expr> <end:@R> "{" <contents:Statement*> "}" "else" <else_contents:IfContainer> => Statement { t: StatementType::If(cond, contents, Some(vec![else_contents])), start, end },
 }
 
 Assignment: Statement = {
-	<l:Iden> "=" <r:Expr> ";" => Statement::Expression(Rpn::Set(l, Box::new(r))),
-	<l:Iden> "+=" <r:Expr> ";" => Statement::Expression(Rpn::Set(l.clone(), Box::new(Rpn::Add(Box::new(Rpn::Variable(l)), Box::new(r))))),
-	<l:Iden> "-=" <r:Expr> ";" => Statement::Expression(Rpn::Set(l.clone(), Box::new(Rpn::Sub(Box::new(Rpn::Variable(l)), Box::new(r))))),
-	<l:Iden> "*=" <r:Expr> ";" => Statement::Expression(Rpn::Set(l.clone(), Box::new(Rpn::Mul(Box::new(Rpn::Variable(l)), Box::new(r))))),
-	<l:Iden> "/=" <r:Expr> ";" => Statement::Expression(Rpn::Set(l.clone(), Box::new(Rpn::Div(Box::new(Rpn::Variable(l)), Box::new(r))))),
-	<l:Iden> "%=" <r:Expr> ";" => Statement::Expression(Rpn::Set(l.clone(), Box::new(Rpn::Mod(Box::new(Rpn::Variable(l)), Box::new(r))))),
-	<l:Iden> "&=" <r:Expr> ";" => Statement::Expression(Rpn::Set(l.clone(), Box::new(Rpn::BinaryAnd(Box::new(Rpn::Variable(l)), Box::new(r))))),
-	<l:Iden> "|=" <r:Expr> ";" => Statement::Expression(Rpn::Set(l.clone(), Box::new(Rpn::BinaryOr(Box::new(Rpn::Variable(l)), Box::new(r))))),
-	<l:Iden> "^=" <r:Expr> ";" => Statement::Expression(Rpn::Set(l.clone(), Box::new(Rpn::BinaryXor(Box::new(Rpn::Variable(l)), Box::new(r))))),
-	<l:Iden> "<<=" <r:Expr> ";" => Statement::Expression(Rpn::Set(l.clone(), Box::new(Rpn::ShiftLeft(Box::new(Rpn::Variable(l)), Box::new(r))))),
-	<l:Iden> ">>=" <r:Expr> ";" => Statement::Expression(Rpn::Set(l.clone(), Box::new(Rpn::ShiftRight(Box::new(Rpn::Variable(l)), Box::new(r))))),
+	<start:@L> <l:Iden> "=" <r:Expr> <end:@R> ";" => Statement { t: StatementType::Expression(Rpn::Set(l, Box::new(r))), start, end },
+	<start:@L> <l:Iden> "+=" <r:Expr> <end:@R> ";" => Statement { t: StatementType::Expression(Rpn::Set(l.clone(), Box::new(Rpn::Add(Box::new(Rpn::Variable(l)), Box::new(r))))), start, end },
+	<start:@L> <l:Iden> "-=" <r:Expr> <end:@R> ";" => Statement { t: StatementType::Expression(Rpn::Set(l.clone(), Box::new(Rpn::Sub(Box::new(Rpn::Variable(l)), Box::new(r))))), start, end },
+	<start:@L> <l:Iden> "*=" <r:Expr> <end:@R> ";" => Statement { t: StatementType::Expression(Rpn::Set(l.clone(), Box::new(Rpn::Mul(Box::new(Rpn::Variable(l)), Box::new(r))))), start, end },
+	<start:@L> <l:Iden> "/=" <r:Expr> <end:@R> ";" => Statement { t: StatementType::Expression(Rpn::Set(l.clone(), Box::new(Rpn::Div(Box::new(Rpn::Variable(l)), Box::new(r))))), start, end },
+	<start:@L> <l:Iden> "%=" <r:Expr> <end:@R> ";" => Statement { t: StatementType::Expression(Rpn::Set(l.clone(), Box::new(Rpn::Mod(Box::new(Rpn::Variable(l)), Box::new(r))))), start, end },
+	<start:@L> <l:Iden> "&=" <r:Expr> <end:@R> ";" => Statement { t: StatementType::Expression(Rpn::Set(l.clone(), Box::new(Rpn::BinaryAnd(Box::new(Rpn::Variable(l)), Box::new(r))))), start, end },
+	<start:@L> <l:Iden> "|=" <r:Expr> <end:@R> ";" => Statement { t: StatementType::Expression(Rpn::Set(l.clone(), Box::new(Rpn::BinaryOr(Box::new(Rpn::Variable(l)), Box::new(r))))), start, end },
+	<start:@L> <l:Iden> "^=" <r:Expr> <end:@R> ";" => Statement { t: StatementType::Expression(Rpn::Set(l.clone(), Box::new(Rpn::BinaryXor(Box::new(Rpn::Variable(l)), Box::new(r))))), start, end },
+	<start:@L> <l:Iden> "<<=" <r:Expr> <end:@R> ";" => Statement { t: StatementType::Expression(Rpn::Set(l.clone(), Box::new(Rpn::ShiftLeft(Box::new(Rpn::Variable(l)), Box::new(r))))), start, end },
+	<start:@L> <l:Iden> ">>=" <r:Expr> <end:@R> ";" => Statement { t: StatementType::Expression(Rpn::Set(l.clone(), Box::new(Rpn::ShiftRight(Box::new(Rpn::Variable(l)), Box::new(r))))), start, end },
 }
 
 Expr = { LogicalOr }

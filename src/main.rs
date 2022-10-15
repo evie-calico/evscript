@@ -1,97 +1,79 @@
-use std::env::args;
+use clap::Parser;
+use codespan_reporting::diagnostic::{Diagnostic, Label};
+use codespan_reporting::files::SimpleFiles;
+use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
+use codespan_reporting::term;
+use evscript::compiler::CompilerOptions;
+
 use std::fs::File;
 use std::fs::read_to_string;
 use std::process::exit;
 
-fn main() {
-	let mut args = args();
-	args.next();
+#[derive(Parser)]
+#[clap(author, version, about, long_about = None)]
+struct Cli {
+	/// Output file
+	#[clap(short, long, value_parser, value_name = "PATH")]
+	output: String,
 
-	for path in args {
-		let input = &match read_to_string(&path) {
-			Ok(input) => input,
-			Err(err) => {
-				eprintln!("{path}: {err}");
-				exit(1);
-			}
-		};
+	/// Report the peak memory usage of each function
+	#[clap(long = "report-usage")]
+	report_usage: bool,
 
-		let ast = match evscript::parse(input) {
-			Ok(ast) => ast,
-			Err(err) => {
-				eprintln!("{path}: {err}");
-				exit(1);
-			}
-		};
-
-		let mut output = match File::create("target/out.asm") {
-			Ok(f) => f,
-			Err(err) => {
-				eprintln!("Failed to open out.asm: {err}");
-				exit(1);
-			}
-		};
-
-		if let Err(err) = evscript::compiler::compile(ast, &mut output) {
-			eprintln!("{path}: {err}");
-			exit(1);
-		}
-	}
+	/// Input file
+	#[clap(value_parser, value_name = "PATH")]
+	input: String,
 }
 
-mod tests {
-	#![cfg(test)]
+fn main() {
+	let cli = Cli::parse();
 
-	use evscript::types::*;
-	use std::fs::read_to_string;
+	let input = &match read_to_string(&cli.input) {
+		Ok(input) => input,
+		Err(err) => {
+			eprintln!("{}: {err}", cli.input);
+			exit(1);
+		}
+	};
 
-	fn test_parsing(path: &str) {
-		let input = &match read_to_string(path) {
-			Ok(input) => input,
-			Err(err) => panic!("{path}: {err}"),
+	let mut output = match File::create(&cli.output) {
+		Ok(f) => f,
+		Err(err) => {
+			eprintln!("{}: {err}", cli.output);
+			exit(1);
+		}
+	};
+
+	let ast = match evscript::parse(input) {
+		Ok(ast) => ast,
+		Err(err) => {
+			eprintln!("{}:{err}", cli.input);
+			exit(1);
+		}
+	};
+
+	let mut compiler_options = CompilerOptions::new();
+	compiler_options.report_usage = cli.report_usage;
+
+	if let Err(err) = evscript::compile(ast, &mut output, compiler_options) {
+		let mut files = SimpleFiles::new();
+		let file_id = files.add(&cli.input, input);
+
+		let diagnostic = if let Some(range) = err.get_range() {
+			Diagnostic::error()
+				.with_labels(vec![Label::primary(file_id, range)])
+				.with_message(err.msg)
+		} else {
+			Diagnostic::error()
+				.with_message(err.msg)
 		};
 
-		if let Err(err) = evscript::parse(input) {
-			panic!("{path}: {err}");
+		let writer = StandardStream::stderr(ColorChoice::Auto);
+		let config = term::Config::default();
+		match term::emit(&mut writer.lock(), &config, &files, &diagnostic) {
+			Err(err) => eprintln!("Failed to print error: {err}"),
+			_ => {}
 		}
-	}
-
-	#[test]
-	fn header() {
-		test_parsing("scripts/header.evs");
-	}
-
-	#[test]
-	fn npc_script() {
-		test_parsing("scripts/npc_script.evs");
-	}
-
-	#[test]
-	fn dungeon_generator() {
-		test_parsing("scripts/dungeon_generator.evs");
-	}
-
-	#[test]
-	fn eval_const_expression() {
-		let input = r#"
-	env script {
-		pool = 9 * (5 == 6) + 3;
-	}
-	"#;
-
-		match evscript::parse(input) {
-			Ok(ast) => {
-				let env = match &ast[0] {
-					Root::Environment(env) => env,
-					_ => panic!("First root should be env!")
-				};
-				let expression = match &env.contents[0] {
-					Statement::Pool(rpn) => rpn,
-					_ => panic!("First statement should be pool!")
-				};
-				assert!(expression.eval_const() == Ok(3), "Incorrect expression result");
-			}
-			Err(err) => panic!("<example_expression>: {err}"),
-		}
+		exit(1);
 	}
 }

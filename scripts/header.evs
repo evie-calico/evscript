@@ -40,7 +40,5 @@ env npc {
 }
 
 script Main {
-	sprite player;
-	player.y = 1;
-	player.x = player.y + 1;
+	u8 i = npc_lock();
 }
