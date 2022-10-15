@@ -649,7 +649,7 @@ fn compile_expression<W: Write>(
 			let result_type = Primative { signed: false, size: 1 };
 			let result = vtable.alloc(Type::Primative(result_type))?;
 			// put (result), value
-			writeln!(output, "\tdb {}, {result}, ${value:X}", env.expand(&format!("put_{result_type}"))?)?;
+			writeln!(output, "\tdb {}, {result}, {value}", env.expand(&format!("put_{result_type}"))?)?;
 			Ok(Some(result))
 		}
 		Rpn::String(string) => {
