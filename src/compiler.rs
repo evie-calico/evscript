@@ -659,9 +659,6 @@ fn compile_expression<W: Write>(
 					vtable.autofree(this_arg);
 				}
 				types::DefinitionParam::Const(t) => {
-					let this_arg = compile_expression(args[index].clone(), env, type_table, vtable, str_table, output)?
-						.ok_or(String::from("Expression has no return value"))?;
-
 					if let Type::Primative(t) = type_table.lookup_type(&t)? {
 						match &args[index] {
 							Rpn::Signed(value) => match t.size {
@@ -692,6 +689,9 @@ fn compile_expression<W: Write>(
 								str_table.push(text.clone());
 								arg_ids.push(format!("LOW({value}), HIGH({value})"));
 							}
+							Rpn::Variable(value) => {
+								arg_ids.push(value.to_string());
+							}
 							_ => {
 								return Err(CompilerError::from("Expression must be constant"))
 							}
@@ -699,11 +699,7 @@ fn compile_expression<W: Write>(
 					} else {
 						return Err(CompilerError::from("Constant arguments may not be structs"))
 					}
-
-					arg_ids.push(this_arg.to_string());
 					index += 1;
-
-					vtable.autofree(this_arg);
 				}
 				types::DefinitionParam::Return(..) => {
 					arg_ids.push(return_id.unwrap().to_string());
@@ -805,7 +801,7 @@ fn compile_expression<W: Write>(
 				types::Definition::Alias(def) => {
 					enum AliasVariant {
 						ArgId(usize),
-						ExpressionId(u8),
+						ExpressionId(String),
 					}
 
 					let (def_arg_count, return_id) = validate_args(&def.args, type_table, vtable)?;
@@ -835,8 +831,29 @@ fn compile_expression<W: Write>(
 							types::AliasParam::Expression(rpn) => {
 								let this_arg = compile_expression(rpn.clone(), env, type_table, vtable, str_table, output)?
 									.ok_or(String::from("Expression has no return value"))?;
-								alias_ids.push(AliasVariant::ExpressionId(this_arg));
+								alias_ids.push(AliasVariant::ExpressionId(this_arg.to_string()));
 								vtable.autofree(this_arg);
+							}
+							types::AliasParam::Const(rpn) => {
+								match rpn {
+									Rpn::Signed(value) => {
+										if *value >= 256 || *value < -128 {
+											return Err(CompilerError::from("WARN: integer constants can only be 8 bits"));
+										}
+										alias_ids.push(AliasVariant::ExpressionId(value.to_string()));
+									}
+									Rpn::String(text) => {
+										let value = format!(".__string{}", str_table.len());
+										str_table.push(text.clone());
+										alias_ids.push(AliasVariant::ExpressionId(format!("LOW({value}), HIGH({value})")));
+									}
+									Rpn::Variable(value) => {
+										alias_ids.push(AliasVariant::ExpressionId(value.to_string()));
+									}
+									_ => {
+										return Err(CompilerError::from("Expression must be constant"))
+									}
+								}
 							}
 						}
 					}

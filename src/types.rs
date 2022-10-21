@@ -94,6 +94,7 @@ pub enum DefinitionParam {
 pub enum AliasParam {
 	ArgId(usize),
 	Expression(Rpn),
+	Const(Rpn),
 }
 
 #[derive(Debug, Clone)]

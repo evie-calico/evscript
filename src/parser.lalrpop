@@ -101,6 +101,7 @@ AliasParam: AliasParam = {
 			error: "Argument index is too large"
 		})?)),
 	Expr => AliasParam::Expression(<>),
+	"const" <expr:Expr> => AliasParam::Const(expr),
 }
 
 IfContainer: Statement = {
