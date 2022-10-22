@@ -664,19 +664,13 @@ fn compile_expression<W: Write>(
 							Rpn::Signed(value) => match t.size {
 								1 => arg_ids.push(value.to_string()),
 								2 => {
-									arg_ids.push((value & 0xFF).to_string());
-									arg_ids.push((value >> 8).to_string());
+									arg_ids.push(format!("{value} & $FF, {value} >> 8"));
 								}
 								3 => {
-									arg_ids.push((value & 0xFF).to_string());
-									arg_ids.push(((value >> 8) & 0xFF).to_string());
-									arg_ids.push(((value >> 16) & 0xFF).to_string());
+									arg_ids.push(format!("{value} & $FF, ({value} >> 8) & $FF, ({value} >> 16) & $FF"));
 								}
 								4 => {
-									arg_ids.push((value & 0xFF).to_string());
-									arg_ids.push(((value >> 8) & 0xFF).to_string());
-									arg_ids.push(((value >> 16) & 0xFF).to_string());
-									arg_ids.push(((value >> 24) & 0xFF).to_string());
+									arg_ids.push(format!("{value} & $FF, ({value} >> 8) & $FF, ({value} >> 16) & $FF, ({value} >> 24) & $FF"));
 								}
 								_ => panic!("Invalid size {}, only up to 32 bits are supported", t.size),
 							}
@@ -689,8 +683,18 @@ fn compile_expression<W: Write>(
 								str_table.push(text.clone());
 								arg_ids.push(format!("LOW({value}), HIGH({value})"));
 							}
-							Rpn::Variable(value) => {
-								arg_ids.push(value.to_string());
+							Rpn::Variable(value) => match t.size {
+								1 => arg_ids.push(value.to_string()),
+								2 => {
+									arg_ids.push(format!("{value} & $FF, {value} >> 8"));
+								}
+								3 => {
+									arg_ids.push(format!("{value} & $FF, ({value} >> 8) & $FF, ({value} >> 16) & $FF"));
+								}
+								4 => {
+									arg_ids.push(format!("{value} & $FF, ({value} >> 8) & $FF, ({value} >> 16) & $FF, ({value} >> 24) & $FF"));
+								}
+								_ => panic!("Invalid size {}, only up to 32 bits are supported", t.size),
 							}
 							_ => {
 								return Err(CompilerError::from("Expression must be constant"))
