@@ -8,7 +8,7 @@ This will be used to execute evscript code.
 
 Begin by downloading this file: [driver.asm](../asm/driver.asm)
 
-`driver.asm` contains ready-made driver with some, but not all, operations.
+`driver.asm` contains a ready-made driver with some, but not all, operations.
 For example, an implementation of `add_u8`, called `StdAdd` in the driver code, is provided, but not an implementation of `mul_u8`.
 If you need to use multiplication in your program, make sure to add an implementation for it.
 
@@ -119,9 +119,10 @@ Start by writing the following at the end of the environment:
 ```
 
 Now we have a bytecode, but we need to define its argument: a 16-bit pointer.
+Since the string won't ever change, we should use `const`.
 Update it to look like this:
 ```evscript
-	def print(u16);
+	def print(const u16);
 ```
 
 Note that the parameter has no name, only a type.
