@@ -94,84 +94,6 @@ struct Environment {
 }
 
 impl Environment {
-	fn std() -> Environment {
-		macro_rules! define {
-			($u:expr, $bytecode:expr) => {
-				(
-					String::from($u),
-					types::Definition::Def(types::Def {
-						args: vec![],
-						bytecode: $bytecode,
-					})
-				)
-			}
-		}
-		macro_rules! sign_alias {
-			($u:expr, $i:expr) => {
-				(
-					String::from($i),
-					types::Definition::Alias(types::Alias {
-						args: vec![],
-						target: String::from($u),
-						target_args: vec![],
-					})
-				)
-			}
-		}
-
-		Environment {
-			name: String::from("std"),
-			definitions: HashMap::from([
-				define!("ret", 0),
-				define!("yld", 1),
-				define!("put_u8", 2),
-				sign_alias!("put_u8", "put_i8"),
-				define!("mov_u8", 3),
-				sign_alias!("mov_u8", "mov_i8"),
-				define!("add_u8", 4),
-				sign_alias!("add_u8", "add_i8"),
-				define!("sub_u8", 5),
-				sign_alias!("sub_u8", "sub_i8"),
-				define!("mul_u8", 6),
-				sign_alias!("mul_u8", "mul_i8"),
-				define!("div_u8", 7),
-				sign_alias!("div_u8", "div_i8"),
-				define!("mod_u8", 8),
-				sign_alias!("mod_u8", "mod_i8"),
-				define!("shl_u8", 9),
-				sign_alias!("shl_u8", "shl_i8"),
-				define!("shr_u8", 10),
-				sign_alias!("shr_u8", "shr_i8"),
-				define!("band_u8", 11),
-				sign_alias!("band_u8", "band_i8"),
-				define!("bxor_u8", 12),
-				sign_alias!("bxor_u8", "bxor_i8"),
-				define!("bor_u8", 13),
-				sign_alias!("bor_u8", "bor_i8"),
-				define!("equ_u8", 14),
-				sign_alias!("equ_u8", "equ_i8"),
-				define!("nequ_u8", 15),
-				sign_alias!("nequ_u8", "nequ_i8"),
-				define!("lt_u8", 16),
-				sign_alias!("lt_u8", "lt_i8"),
-				define!("gt_u8", 17),
-				sign_alias!("gt_u8", "gt_i8"),
-				define!("lte_u8", 18),
-				sign_alias!("lte_u8", "lte_i8"),
-				define!("gte_u8", 19),
-				sign_alias!("gte_u8", "gte_i8"),
-				define!("land_u8", 20),
-				sign_alias!("land_u8", "land_i8"),
-				define!("lor_u8", 21),
-				sign_alias!("lor_u8", "lor_i8"),
-				define!("jmp", 22),
-				define!("jmp_if_true", 23),
-				define!("jmp_if_false", 24),
-			]),
-			pool: 0,
-		}
-	}
-
 	fn expand(&self, name: &str) -> Result<String, String> {
 		match self.lookup(name)? {
 			types::Definition::Def(..) => {
@@ -1302,6 +1224,15 @@ fn compile_function<W: Write>(
 		println!("({name}) Peak usage: {}", vtable.peak_usage);
 	}
 
+	if (vtable.peak_usage as u16) > env.pool {
+		eprintln!(
+			"WARN: {name} is using {} bytes, more than the maximum pool size for {}: {}",
+			vtable.peak_usage,
+			env.name,
+			env.pool,
+		);
+	}
+
 	Ok(())
 }
 
@@ -1369,9 +1300,7 @@ pub fn compile<W: Write>(
 	output: &mut W,
 	options: CompilerOptions,
 ) -> Result<(), CompilerError> {
-	let mut environment_table = EnvironmentTable::from([
-		(String::from("std"), Environment::std()),
-	]);
+	let mut environment_table = EnvironmentTable::new();
 
 	let mut type_table = TypeTable { table: HashMap::<String, Type>::from([
 		(String::from("u8"), Type::Primative(Primative { signed: false, size: 1 } )),
