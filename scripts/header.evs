@@ -10,7 +10,25 @@ struct sprite {
 }
 
 env script {
-	use std;
+	def ret();
+	def yld();
+	def jmp();
+	def jmp_if_true();
+	def jmp_if_false();
+	def put_u8(); alias put_i8() = put_u8();
+	def mov_u8(); alias mov_i8() = mov_u8();
+	def add_u8(); alias add_i8() = add_u8();
+	def sub_u8(); alias sub_i8() = sub_u8();
+	def band_u8(); alias band_i8() = band_u8();
+	def equ_u8(); alias equ_i8() = equ_u8();
+	def nequ_u8(); alias nequ_i8() = nequ_u8();
+	def lt_u8(); alias lt_i8() = lt_u8();
+	def gt_u8(); alias gt_i8() = gt_u8();
+	def lte_u8(); alias lte_i8() = lte_u8();
+	def gte_u8(); alias gte_i8() = gte_u8();
+	def land_u8(); alias land_i8() = land_u8();
+	def lor_u8(); alias lor_i8() = lor_u8();
+
 	def memset(ptr, u8, u16);
 	def rand(return u8);
 	def print(u16);
