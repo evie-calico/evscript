@@ -49,7 +49,7 @@ Main:
 
 SECTION "Font", ROM0
 Font:
-	INCBIN "bin/font.2bpp"
+	INCBIN "font.2bpp"
 .end
 
 SECTION "Script Pool", WRAM0

@@ -55,6 +55,8 @@ While this particular bytecode isn't very useful, it shows us how to implement o
 
 There's just a bit more boilerplate essential to creating a Game Boy rom, so download [main.asm](../asm/main.asm) as well.
 
+...and we'll need a font if we want to render any text: [font.png](../asm/font.png)
+
 Finally, let's get started using evscript!
 
 We're going to begin by creating an *environment*.
@@ -142,6 +144,7 @@ Now just write `print("Hello, world!");`, and your program is done!
 To build it:
 ```sh
 evscript -o script.asm script.evs
+rgbgfx -o font.2bpp font.png
 rgbasm -o main.o main.asm 
 rgbasm -o driver.o driver.asm
 rgbasm -o script.o script.asm
