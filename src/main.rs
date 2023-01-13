@@ -4,6 +4,7 @@ use codespan_reporting::files::SimpleFiles;
 use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
 use codespan_reporting::term;
 use evscript::compiler::CompilerOptions;
+use lalrpop_util::ParseError;
 
 use std::fs::File;
 use std::fs::read_to_string;
@@ -47,7 +48,51 @@ fn main() {
 	let ast = match evscript::parse(input) {
 		Ok(ast) => ast,
 		Err(err) => {
-			eprintln!("{}:{err}", cli.input);
+			let (message, range) = match err {
+				ParseError::InvalidToken { location } => {
+					(String::from("Invalid token"), Some(location..location))
+				}
+				ParseError::UnrecognizedEOF { location, expected } => {
+					let mut message = format!("Unexpected EOF, expected one of:");
+					for i in expected {
+						message += " ";
+						message += &i;
+					}
+					(message, Some(location..location))
+				}
+				ParseError::UnrecognizedToken { token, expected } => {
+					let (l, t, r) = token;
+					let mut message = format!("Unexepected token. Got \"{t}\", expected one of:");
+					for i in expected {
+						message += " ";
+						message += &i;
+					}
+					(message, Some(l..r))
+				}
+				ParseError::ExtraToken { token } => {
+					let (l, t, r) = token;
+					(format!("Extra token: \"{t}\""), Some(l..r))
+				}
+				ParseError::User { error } => (error.to_string(), None::<std::ops::Range<usize>>),
+			};
+			let mut files = SimpleFiles::new();
+			let file_id = files.add(&cli.input, input);
+
+			let diagnostic = if let Some(range) = range {
+				Diagnostic::error()
+					.with_labels(vec![Label::primary(file_id, range)])
+					.with_message(message)
+			} else {
+				Diagnostic::error()
+					.with_message(message)
+			};
+
+			let writer = StandardStream::stderr(ColorChoice::Auto);
+			let config = term::Config::default();
+			match term::emit(&mut writer.lock(), &config, &files, &diagnostic) {
+				Err(err) => eprintln!("Failed to print error: {err}"),
+				_ => {}
+			}
 			exit(1);
 		}
 	};
