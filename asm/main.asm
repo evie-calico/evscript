@@ -19,7 +19,6 @@ Main:
 	jr c, Main
 	xor a, a
 	ldh [rLCDC], a
-	ldh [rBGP], a
 	inc a
 	ldh [rIE], a
 
