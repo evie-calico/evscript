@@ -142,7 +142,9 @@ Now just write `print("Hello, world!");`, and your program is done!
 To build it:
 ```sh
 evscript -o script.asm script.evs
-rgbasm -o main.o main.asm driver.asm script.asm
-rgblink -o main.gb main.o
+rgbasm -o main.o main.asm 
+rgbasm -o driver.o driver.asm
+rgbasm -o script.o script.asm
+rgblink -o main.gb main.o driver.o script.o
 rgbfix -v main.gb
 ```

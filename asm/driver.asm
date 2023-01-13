@@ -1,7 +1,3 @@
-include "defines.inc"
-include "dungeon.inc"
-include "entity.inc"
-
 section "evscript Driver", rom0
 ; @param de: Variable pool
 ; @param hl: Script pointer
