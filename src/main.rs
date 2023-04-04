@@ -100,7 +100,7 @@ fn main() {
 	let mut compiler_options = CompilerOptions::new();
 	compiler_options.report_usage = cli.report_usage;
 
-	if let Err(err) = evscript::compile(ast, &mut output, compiler_options) {
+	if let Err(err) = evscript::compile(ast, &cli.input, &mut output, compiler_options) {
 		let mut files = SimpleFiles::new();
 		let file_id = files.add(&cli.input, input);
 

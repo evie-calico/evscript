@@ -1297,6 +1297,7 @@ fn compile_ast<W: Write>(
 
 pub fn compile<W: Write>(
 	ast: Vec<types::Root>,
+	path: &str,
 	output: &mut W,
 	options: CompilerOptions,
 ) -> Result<(), CompilerError> {
@@ -1307,5 +1308,6 @@ pub fn compile<W: Write>(
 		(String::from("u16"), Type::Primative(Primative { signed: false, size: 2 } )),
 	]) };
 
+	writeln!(output, "def __EVSCRIPT_FILE__ equs {path:?}")?;
 	compile_ast(ast, &mut environment_table, &mut type_table, output, &options)
 }
