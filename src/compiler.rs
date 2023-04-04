@@ -562,6 +562,7 @@ fn compile_expression<W: Write>(
 	) -> Result<Vec<String>, CompilerError> {
 		let mut index = 0;
 		let mut arg_ids = Vec::<String>::new();
+		let mut to_free = Vec::<u8>::new();
 
 		for i in def_args {
 			match i {
@@ -576,9 +577,9 @@ fn compile_expression<W: Write>(
 					}
 
 					arg_ids.push(this_arg.to_string());
+					// Free this temporary once all arguments are processed.
+					to_free.push(this_arg);
 					index += 1;
-
-					vtable.autofree(this_arg);
 				}
 				types::DefinitionParam::Const(t) => {
 					if let Type::Primative(t) = type_table.lookup_type(&t)? {
@@ -632,6 +633,11 @@ fn compile_expression<W: Write>(
 				}
 			}
 		}
+
+		for i in to_free {
+			vtable.autofree(i);
+		}
+
 		Ok(arg_ids)
 	}
 
