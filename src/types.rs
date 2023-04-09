@@ -16,7 +16,9 @@ pub enum StatementType {
 	// Function statements
 	Expression(Rpn),
 	Declaration(String, String),
+	PointerDeclaration(String, String),
 	DeclareAssign(String, String, Rpn),
+	PointerDeclareAssign(String, String, Rpn),
 	If(Rpn, Vec<Statement>, Option<Vec<Statement>>),
 	While(Rpn, Vec<Statement>),
 	Do(Rpn, Vec<Statement>),

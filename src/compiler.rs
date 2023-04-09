@@ -119,6 +119,7 @@ type EnvironmentTable = HashMap<String, Environment>;
 #[derive(Debug, Clone, PartialEq)]
 enum Type {
 	Primative(Primative),
+	Pointer(Box<Type>),
 	Struct(Vec<(String, Type)>),
 }
 
@@ -126,6 +127,7 @@ impl Type {
 	fn size(&self) -> u8 {
 		match self {
 			Type::Primative(t) => t.size,
+			Type::Pointer(_) => Primative::pointer().size,
 			Type::Struct(t) => {
 				let mut this_size = 0;
 
@@ -150,6 +152,22 @@ impl Primative {
 		Primative {
 			signed: l.signed || r.signed,
 			size: if l.size >= r.size { l.size } else { r.size },
+		}
+	}
+	
+	// TODO: make the default_integer type configurable
+	fn default_integer() -> Primative {
+		Primative {
+			signed: false,
+			size: 1,
+		}
+	}
+	
+	// TODO: make the default pointer type configurable
+	fn pointer() -> Primative {
+		Primative {
+			signed: false,
+			size: 2
 		}
 	}
 }
@@ -177,6 +195,7 @@ impl TypeTable {
 			Some(t) => {
 				match t {
 					Type::Primative(result) => Ok(*result),
+					Type::Pointer(_) => panic!("A type should never be declared as a pointer"),
 					Type::Struct(..) => return Err(format!("{name} must be a primative type"))
 				}
 			},
@@ -303,6 +322,12 @@ impl VariableTable {
 													}
 													return Ok((i + offset) as u8);
 												}
+												Type::Pointer(..) => {
+													if comp_i + 1 != components.len() {
+														return Err(format!("{member_name} is a pointer and has no members"))
+													}
+													return Ok((i + offset) as u8);
+												}
 												Type::Struct(..) => {
 													if comp_i + 1 == components.len() {
 														return Ok((i + offset) as u8);
@@ -341,12 +366,25 @@ impl VariableTable {
 		}
 	}
 
+	fn is_pointer(&self, id: u8) -> bool {
+		let id = id as usize;
+
+		match &self.variables[id] {
+			Some(var) => match var.t {
+				Type::Pointer(..) => true,
+				_ => false
+			},
+			None => panic!("Variable index {id} does not exist"),
+		}
+	}
+
 	fn type_of(&mut self, id: u8) -> Primative {
 		let id = id as usize;
 
 		match &self.variables[id] {
 			Some(var) => match var.t {
 				Type::Primative(result) => return result,
+				Type::Pointer(..) => return Primative::pointer(),
 				Type::Struct(..) => {}
 			},
 			None => {}
@@ -375,6 +413,11 @@ impl VariableTable {
 										return *primative;
 									}
 								}
+								Type::Pointer(..) => {
+									if id == member_offset {
+										return Primative::pointer();
+									}
+								}
 								Type::Struct(members) => {
 									if id < member_offset + i.size() as usize {
 										return seek_struct(members, id, member_offset);
@@ -388,7 +431,7 @@ impl VariableTable {
 					}
 
 					match &var.t {
-						Type::Primative(..) => break,
+						Type::Primative(..) | Type::Pointer(..) => break,
 						Type::Struct(members) => {
 							return seek_struct(&members, id, index);
 						}
@@ -671,11 +714,25 @@ fn compile_expression<W: Write>(
 			match vtable.lookup(&name) {
 				Ok(i) => Ok(Some(i)),
 				Err(..) => {
-					// TODO: make the default integer type configurable
-					let result_type = Primative { signed: false, size: 1 };
+					let result_type = Primative::default_integer();
 					let result = vtable.alloc(Type::Primative(result_type))?;
 					// put (result), value
 					writeln!(output, "\tdb {}, {result}, {name}", env.expand(&format!("put_{result_type}"))?)?;
+					Ok(Some(result))
+				}
+			}
+		}
+		Rpn::Address(name) => {
+			match vtable.lookup(&name) {
+				Ok(..) => {
+					return Err(CompilerError::from("Cannot take the address of a local variable!"));
+				},
+				Err(..) => {
+					let result_type = Primative::pointer();
+					let result = vtable.alloc(Type::Primative(result_type))?;
+					// put (result), value
+					writeln!(output, "\tdb {}, {result}, {name} & $FF", env.expand(&format!("put_u8"))?)?;
+					writeln!(output, "\tdb {}, {result} + 1, {name} >> 8", env.expand(&format!("put_u8"))?)?;
 					Ok(Some(result))
 				}
 			}
@@ -866,8 +923,37 @@ fn compile_expression<W: Write>(
 
 			Ok(Some(result))
 		}
-		Rpn::Deref(..) => todo!(),
-		Rpn::Address(..) => todo!(),
+		Rpn::Deref(i) => {
+			let source = compile_expression(*i, env, type_table, vtable, str_table, output)?
+				.ok_or(String::from("Expression has no return value"))?;
+
+			if !vtable.is_pointer(source) {
+				return Err(CompilerError::from("Attempting to deref a non-pointer! Note that address-of returns a `u16`, not a `u16 ptr`. Try declaring the pointer before dereferencing."));
+			}
+
+			let source_type = match &vtable.variables[source as usize] {
+				Some(var) => match &var.t {
+					Type::Pointer(t) => match **t {
+						Type::Primative(t) => t,
+						Type::Pointer(..) => Primative::pointer(),
+						Type::Struct(..) => {
+							return Err(CompilerError::from("A pointer to a structure cannot be dereferenced. Try working with individual members."));
+						}
+					}
+					_ => panic!(),
+				},
+				None => panic!(),
+			};
+
+			let dest = vtable.alloc(Type::Primative(source_type))?;
+			let dest_type = vtable.type_of(dest);
+
+			writeln!(output, "\tdb {}, {dest}, {source}", env.expand(&format!("deref_{dest_type}"))?)?;
+
+			vtable.autofree(source);
+
+			Ok(Some(dest))
+		}
 		Rpn::Mul(l, r) => binary_operation(l, "mul", r, env, type_table, vtable, str_table, output),
 		Rpn::Div(l, r) => binary_operation(l, "div", r, env, type_table, vtable, str_table, output),
 		Rpn::Mod(l, r) => binary_operation(l, "mod", r, env, type_table, vtable, str_table, output),
@@ -936,6 +1022,11 @@ fn compile_statement<W: Write>(
 			let new_var = vtable.alloc(type_table.lookup_type(&t)?)?;
 			*vtable.name_of(new_var) = Some(name);
 		}
+		StatementType::PointerDeclaration(t, name) => {
+			let object_type = type_table.lookup_type(&t)?;
+			let new_var = vtable.alloc(Type::Pointer(Box::new(object_type)))?;
+			*vtable.name_of(new_var) = Some(name);
+		}
 		StatementType::DeclareAssign(t, name, rpn) => {
 			match rpn {
 				Rpn::Variable(source_name) => {
@@ -965,6 +1056,23 @@ fn compile_statement<W: Write>(
 					*vtable.name_of(new_var) = Some(name);
 				}
 			}
+		},
+		StatementType::PointerDeclareAssign(t, name, rpn) => {
+			let dest_type = match type_table.lookup_primative(&t) {
+				Ok(t) => t,
+				Err(..) => return Err(statement_error(String::from(
+					"Cannot assign to structures, assign to individual members instead"
+				)))
+			};
+			let dest = vtable.alloc(Type::Pointer(Box::new(Type::Primative(dest_type))))?;
+			*vtable.name_of(dest) = Some(name);
+
+			let source = compile_expression(rpn, env, type_table, vtable, str_table, output)?
+				.ok_or(statement_error(String::from("Expression has no return value")))?;
+
+			writeln!(output, "\tdb {}, {dest}, {source}", env.expand(&format!("mov_u16"))?)?;
+
+			vtable.autofree(source);
 		},
 		StatementType::If(condition, contents, else_contents) => {
 			let condition_result = compile_expression(condition, env, type_table, vtable, str_table, output)?

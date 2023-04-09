@@ -6,6 +6,8 @@ env std {
 	def jmp_if_false();
 	def put_u8(); alias put_i8() = put_u8();
 	def mov_u8(); alias mov_i8() = mov_u8();
+	def mov_u16(); alias mov_i16() = mov_u16();
+	def deref_u8(); alias deref_i8() = deref_u8();
 	def add_u8(); alias add_i8() = add_u8();
 	def sub_u8(); alias sub_i8() = sub_u8();
 	def band_u8(); alias band_i8() = band_u8();

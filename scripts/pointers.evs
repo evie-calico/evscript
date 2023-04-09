@@ -1,0 +1,6 @@
+include "scripts/std.evs";
+
+std Main {
+	u8 ptr x = &ExampleLabel;
+	u8 y = [x];
+}

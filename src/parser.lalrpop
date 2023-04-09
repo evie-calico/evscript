@@ -12,13 +12,13 @@ match {
 	"==", "!=", "<", ">", "<=", ">=", "&&", "||",
 	"=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=",
 	"...", "$", ":",
-	"(", ")", "{", "}",
+	"(", ")", "{", "}", "[", "]",
 	r"[a-zA-Z_][a-zA-Z0-9_.]*",
 	r#""([^"]|\.)*""#,
 	r"-?[0-9]+",
 	";", ",",
 	"env", "use", "include", "def", "alias", "macro", "pool", "const",
-	"return", "yield", "typedef", "struct",
+	"return", "yield", "typedef", "struct", "ptr",
 	"if", "else", "while", "do", "for", "repeat", "loop",
 	r"#asm[^#]*#end",
 
@@ -77,7 +77,9 @@ Statement: Statement = {
 	<start:@L> "pool" "=" <expr:Expr> <end:@R> ";" => Statement { t: StatementType::Pool(expr), start, end },
 	<start:@L> <expr:Expr> <end:@R> ";" => Statement { t: StatementType::Expression(expr), start, end },
 	<start:@L> <t:Iden> <i:Iden> <end:@R> ";" => Statement { t: StatementType::Declaration(t, i), start, end },
+	<start:@L> <t:Iden> "ptr" <i:Iden> <end:@R> ";" => Statement { t: StatementType::PointerDeclaration(t, i), start, end },
 	<start:@L> <t:Iden> <l:Iden> "=" <r:Expr> <end:@R> ";" => Statement { t: StatementType::DeclareAssign(t, l, r), start, end },
+	<start:@L> <t:Iden> "ptr" <l:Iden> "=" <r:Expr> <end:@R> ";" => Statement { t: StatementType::PointerDeclareAssign(t, l, r), start, end },
 	Assignment,
 	IfContainer,
 	<start:@L> "while" <cond:Expr> <end:@R> "{" <contents:Statement*> "}" => Statement { t: StatementType::While(cond, contents), start, end },
@@ -319,7 +321,6 @@ Unary: Rpn = {
 		}
 		Rpn::Not(Box::new(l))
 	},
-	"*" <l:Term> => Rpn::Deref(Box::new(l)),
 	"&" <l:Iden> => Rpn::Address(l),
 	Term,
 };
@@ -329,6 +330,7 @@ Term: Rpn = {
 	String => Rpn::String(<>),
 	Iden => Rpn::Variable(<>),
 	"(" <Expr> ")",
+	"[" <e:Expr> "]" => Rpn::Deref(Box::new(e)),
 	<i:Iden> "(" <args:Comma<Expr>> ")" => Rpn::Call(i, args)
 };
 
