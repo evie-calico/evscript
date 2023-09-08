@@ -6,11 +6,11 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-lalrpop-util = { version = "0.19.8", features = ["lexer"] }
+lalrpop-util = { version = "0.20.0", features = ["lexer"] }
 regex = "1"
-clap = { version = "3.2.17", features = ["derive"] }
+clap = { version = "4.4.2", features = ["derive"] }
 codespan-reporting = "0.11.1"
 
 # Add a build-time dependency on the lalrpop library:
 [build-dependencies]
-lalrpop = "0.19.8"
+lalrpop = "0.20.0"
