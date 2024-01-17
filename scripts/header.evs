@@ -1,7 +1,7 @@
 include "scripts/std.evs";
 #asm include "script.inc" #end
 
-typedef ptr = u16;
+typedef pointer = u16;
 
 struct sprite {
 	y: u8,
@@ -13,7 +13,7 @@ struct sprite {
 env script {
 	use std;
 
-	def memset(ptr, u8, u16);
+	def memset(pointer, u8, u16);
 	def rand(return u8);
 	def print(u16);
 	def say(u16);
