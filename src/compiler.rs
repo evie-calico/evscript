@@ -3,6 +3,7 @@ use crate::types::Rpn;
 use crate::types::Statement;
 use crate::types::StatementType;
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::convert::From;
 use std::fmt;
@@ -78,6 +79,12 @@ pub struct CompilerOptions {
 	pub report_usage: bool,
 }
 
+impl Default for CompilerOptions {
+	fn default() -> Self {
+		Self::new()
+	}
+}
+
 impl CompilerOptions {
 	pub fn new() -> CompilerOptions {
 		CompilerOptions {
@@ -105,7 +112,7 @@ impl Environment {
 	fn lookup(&self, name: &str) -> Result<&types::Definition, String> {
 		match self.definitions.get(name) {
 			Some(def) => Ok(def),
-			None => return Err(format!("Definition of {name} not found")),
+			None => Err(format!("Definition of {name} not found")),
 		}
 	}
 }
@@ -187,7 +194,7 @@ impl TypeTable {
 	fn lookup_type(&self, name: &str) -> Result<Type, String> {
 		match self.table.get(name) {
 			Some(t) => Ok(t.clone()),
-			None => return Err(format!("Type {name} not found")),
+			None => Err(format!("Type {name} not found")),
 		}
 	}
 
@@ -196,9 +203,9 @@ impl TypeTable {
 			Some(t) => match t {
 				Type::Primative(result) => Ok(*result),
 				Type::Pointer(_) => panic!("A type should never be declared as a pointer"),
-				Type::Struct(..) => return Err(format!("{name} must be a primative type")),
+				Type::Struct(..) => Err(format!("{name} must be a primative type")),
 			},
-			None => return Err(format!("Type {name} not found")),
+			None => Err(format!("Type {name} not found")),
 		}
 	}
 }
@@ -264,7 +271,7 @@ impl VariableTable {
 						t,
 						scope_level: self.scope_level,
 					};
-					self.variables[i as usize] = Some(new_var);
+					self.variables[i] = Some(new_var);
 					return Ok(i as u8);
 				}
 			}
@@ -277,7 +284,7 @@ impl VariableTable {
 
 	fn free(&mut self, i: u8) {
 		assert!(
-			self.variables[i as usize] != None,
+			self.variables[i as usize].is_some(),
 			"Variable does not exist"
 		);
 		self.variables[i as usize] = None;
@@ -285,7 +292,7 @@ impl VariableTable {
 
 	fn autofree(&mut self, i: u8) {
 		if let Some(var) = &self.variables[i as usize] {
-			if let None = var.name {
+			if var.name.is_none() {
 				self.variables[i as usize] = None;
 			}
 		}
@@ -377,10 +384,7 @@ impl VariableTable {
 		let id = id as usize;
 
 		match &self.variables[id] {
-			Some(var) => match var.t {
-				Type::Pointer(..) => true,
-				_ => false,
-			},
+			Some(var) => matches!(var.t, Type::Pointer(..)),
 			None => panic!("Variable index {id} does not exist"),
 		}
 	}
@@ -440,7 +444,7 @@ impl VariableTable {
 					match &var.t {
 						Type::Primative(..) | Type::Pointer(..) => break,
 						Type::Struct(members) => {
-							return seek_struct(&members, id, index);
+							return seek_struct(members, id, index);
 						}
 					}
 				}
@@ -468,7 +472,7 @@ impl VariableTable {
 			if let Some(variable) = &self.variables[i] {
 				let this_size = variable.t.size() as usize;
 				if variable.scope_level > self.scope_level {
-					self.variables[i as usize] = None;
+					self.variables[i] = None;
 				}
 				i += this_size;
 			} else {
@@ -517,21 +521,18 @@ fn compile_environment<W: Write>(
 
 					let mut new_def = def.clone();
 
-					match new_def {
-						types::Definition::Def(ref mut sub_def) => {
-							sub_def.bytecode = bytecode_index
-								.checked_add(sub_def.bytecode)
-								.ok_or(format!("Hit bytecode limit in environment {this_name}"))?;
-							writeln!(
-								output,
-								"def {this_name}@{def_name} equ {}",
-								sub_def.bytecode
-							)?;
-							if sub_def.bytecode > greatest_bytecode {
-								greatest_bytecode = sub_def.bytecode;
-							}
+					if let types::Definition::Def(ref mut sub_def) = new_def {
+						sub_def.bytecode = bytecode_index
+							.checked_add(sub_def.bytecode)
+							.ok_or(format!("Hit bytecode limit in environment {this_name}"))?;
+						writeln!(
+							output,
+							"def {this_name}@{def_name} equ {}",
+							sub_def.bytecode
+						)?;
+						if sub_def.bytecode > greatest_bytecode {
+							greatest_bytecode = sub_def.bytecode;
 						}
-						_ => {}
 					}
 
 					compiled_env.definitions.insert(def_name.clone(), new_def);
@@ -543,15 +544,12 @@ fn compile_environment<W: Write>(
 				if compiled_env.definitions.get(&name).is_some() {
 					eprintln!("WARN: duplicate definition of {name}");
 				}
-				match def {
-					types::Definition::Def(ref mut sub_def) => {
-						writeln!(output, "def {this_name}@{name} equ {bytecode_index}")?;
-						sub_def.bytecode = bytecode_index;
-						bytecode_index = bytecode_index
-							.checked_add(1)
-							.ok_or(format!("Hit bytecode limit in environment {this_name}"))?;
-					}
-					_ => {}
+				if let types::Definition::Def(ref mut sub_def) = def {
+					writeln!(output, "def {this_name}@{name} equ {bytecode_index}")?;
+					sub_def.bytecode = bytecode_index;
+					bytecode_index = bytecode_index
+						.checked_add(1)
+						.ok_or(format!("Hit bytecode limit in environment {this_name}"))?;
 				}
 
 				compiled_env.definitions.insert(name.clone(), def);
@@ -588,18 +586,18 @@ fn compile_expression<W: Write>(
 	output: &mut W,
 ) -> Result<Option<u8>, CompilerError> {
 	fn binary_operation<W: Write>(
-		l: Box<Rpn>,
+		l: Rpn,
 		op: &str,
-		r: Box<Rpn>,
+		r: Rpn,
 		env: &Environment,
 		type_table: &TypeTable,
 		vtable: &mut VariableTable,
 		str_table: &mut Vec<String>,
 		output: &mut W,
 	) -> Result<Option<u8>, CompilerError> {
-		let l = compile_expression(*l, env, type_table, vtable, str_table, output)?
+		let l = compile_expression(l, env, type_table, vtable, str_table, output)?
 			.ok_or(String::from("Expression has no return value"))?;
-		let r = compile_expression(*r, env, type_table, vtable, str_table, output)?
+		let r = compile_expression(r, env, type_table, vtable, str_table, output)?
 			.ok_or(String::from("Expression has no return value"))?;
 
 		let result_type = Primative::from(vtable.type_of(l), vtable.type_of(r));
@@ -620,7 +618,7 @@ fn compile_expression<W: Write>(
 
 	fn compile_arguments<W: Write>(
 		def_args: &Vec<types::DefinitionParam>,
-		args: &Vec<Rpn>,
+		args: &[Rpn],
 		return_id: Option<u8>,
 		env: &Environment,
 		type_table: &TypeTable,
@@ -645,7 +643,7 @@ fn compile_expression<W: Write>(
 					)?
 					.ok_or(String::from("Expression has no return value"))?;
 
-					if let Type::Primative(t) = type_table.lookup_type(&t)? {
+					if let Type::Primative(t) = type_table.lookup_type(t)? {
 						if t != vtable.type_of(this_arg) {
 							eprintln!("WARN: argument type does not match definition");
 						}
@@ -657,7 +655,7 @@ fn compile_expression<W: Write>(
 					index += 1;
 				}
 				types::DefinitionParam::Const(t) => {
-					if let Type::Primative(t) = type_table.lookup_type(&t)? {
+					if let Type::Primative(t) = type_table.lookup_type(t)? {
 						match &args[index] {
 							Rpn::Signed(value) => match t.size {
 								1 => arg_ids.push(value.to_string()),
@@ -734,12 +732,12 @@ fn compile_expression<W: Write>(
 					def_arg_count += 1;
 				}
 				types::DefinitionParam::Return(t) => {
-					if return_id != None {
+					if return_id.is_some() {
 						return Err(CompilerError::from(
 							"A function may only have one return value",
 						));
 					}
-					return_id = Some(vtable.alloc(type_table.lookup_type(&t)?)?);
+					return_id = Some(vtable.alloc(type_table.lookup_type(t)?)?);
 				}
 			}
 		}
@@ -766,11 +764,9 @@ fn compile_expression<W: Write>(
 		}
 		Rpn::Address(name) => {
 			match vtable.lookup(&name) {
-				Ok(..) => {
-					return Err(CompilerError::from(
-						"Cannot take the address of a local variable!",
-					));
-				}
+				Ok(..) => Err(CompilerError::from(
+					"Cannot take the address of a local variable!",
+				)),
 				Err(..) => {
 					let result_type = Primative::pointer();
 					let result = vtable.alloc(Type::Primative(result_type))?;
@@ -778,12 +774,12 @@ fn compile_expression<W: Write>(
 					writeln!(
 						output,
 						"\tdb {}, {result}, {name} & $FF",
-						env.expand(&format!("put_u8"))?
+						env.expand("put_u8")?
 					)?;
 					writeln!(
 						output,
 						"\tdb {}, {result} + 1, {name} >> 8",
-						env.expand(&format!("put_u8"))?
+						env.expand("put_u8")?
 					)?;
 					Ok(Some(result))
 				}
@@ -817,12 +813,12 @@ fn compile_expression<W: Write>(
 			writeln!(
 				output,
 				"\tdb {}, {result}, LOW({value})",
-				env.expand(&format!("put_u8"))?
+				env.expand("put_u8")?
 			)?;
 			writeln!(
 				output,
 				"\tdb {}, {result} + 1, HIGH({value})",
-				env.expand(&format!("put_u8"))?
+				env.expand("put_u8")?
 			)?;
 			str_table.push(string);
 			Ok(Some(result))
@@ -831,10 +827,10 @@ fn compile_expression<W: Write>(
 			types::Definition::Def(def) => {
 				let (def_arg_count, return_id) = validate_args(&def.args, type_table, vtable)?;
 
-				if args.len() > def_arg_count {
-					return Err(CompilerError::from("Too many arguments"));
-				} else if args.len() < def_arg_count {
-					return Err(CompilerError::from("Not enough arguments"));
+				match args.len().cmp(&def_arg_count) {
+					Ordering::Equal => {}
+					Ordering::Greater => return Err(CompilerError::from("Too many arguments")),
+					Ordering::Less => return Err(CompilerError::from("Not enough arguments")),
 				}
 
 				let arg_ids = compile_arguments(
@@ -845,7 +841,7 @@ fn compile_expression<W: Write>(
 				for i in arg_ids {
 					write!(output, ", {i}")?;
 				}
-				writeln!(output, "")?;
+				writeln!(output)?;
 
 				Ok(return_id)
 			}
@@ -857,10 +853,10 @@ fn compile_expression<W: Write>(
 
 				let (def_arg_count, return_id) = validate_args(&def.args, type_table, vtable)?;
 
-				if args.len() > def_arg_count {
-					return Err(CompilerError::from("Too many arguments"));
-				} else if args.len() < def_arg_count {
-					return Err(CompilerError::from("Not enough arguments"));
+				match args.len().cmp(&def_arg_count) {
+					Ordering::Equal => {}
+					Ordering::Greater => return Err(CompilerError::from("Too many arguments")),
+					Ordering::Less => return Err(CompilerError::from("Not enough arguments")),
 				}
 
 				let arg_ids = compile_arguments(
@@ -925,17 +921,17 @@ fn compile_expression<W: Write>(
 						}
 					}
 				}
-				writeln!(output, "")?;
+				writeln!(output)?;
 
 				Ok(return_id)
 			}
 			types::Definition::Macro(def) => {
 				let (def_arg_count, return_id) = validate_args(&def.args, type_table, vtable)?;
 
-				if args.len() > def_arg_count {
-					return Err(CompilerError::from("Too many arguments"));
-				} else if args.len() < def_arg_count {
-					return Err(CompilerError::from("Not enough arguments"));
+				match args.len().cmp(&def_arg_count) {
+					Ordering::Equal => {}
+					Ordering::Greater => return Err(CompilerError::from("Too many arguments")),
+					Ordering::Less => return Err(CompilerError::from("Not enough arguments")),
 				}
 
 				let arg_ids = compile_arguments(
@@ -946,7 +942,7 @@ fn compile_expression<W: Write>(
 				for i in arg_ids {
 					write!(output, " {i},")?;
 				}
-				writeln!(output, "")?;
+				writeln!(output)?;
 
 				Ok(return_id)
 			}
@@ -1032,47 +1028,59 @@ fn compile_expression<W: Write>(
 
 			Ok(Some(dest))
 		}
-		Rpn::Mul(l, r) => binary_operation(l, "mul", r, env, type_table, vtable, str_table, output),
-		Rpn::Div(l, r) => binary_operation(l, "div", r, env, type_table, vtable, str_table, output),
-		Rpn::Mod(l, r) => binary_operation(l, "mod", r, env, type_table, vtable, str_table, output),
-		Rpn::Add(l, r) => binary_operation(l, "add", r, env, type_table, vtable, str_table, output),
-		Rpn::Sub(l, r) => binary_operation(l, "sub", r, env, type_table, vtable, str_table, output),
+		Rpn::Mul(l, r) => {
+			binary_operation(*l, "mul", *r, env, type_table, vtable, str_table, output)
+		}
+		Rpn::Div(l, r) => {
+			binary_operation(*l, "div", *r, env, type_table, vtable, str_table, output)
+		}
+		Rpn::Mod(l, r) => {
+			binary_operation(*l, "mod", *r, env, type_table, vtable, str_table, output)
+		}
+		Rpn::Add(l, r) => {
+			binary_operation(*l, "add", *r, env, type_table, vtable, str_table, output)
+		}
+		Rpn::Sub(l, r) => {
+			binary_operation(*l, "sub", *r, env, type_table, vtable, str_table, output)
+		}
 		Rpn::ShiftLeft(l, r) => {
-			binary_operation(l, "shl", r, env, type_table, vtable, str_table, output)
+			binary_operation(*l, "shl", *r, env, type_table, vtable, str_table, output)
 		}
 		Rpn::ShiftRight(l, r) => {
-			binary_operation(l, "shr", r, env, type_table, vtable, str_table, output)
+			binary_operation(*l, "shr", *r, env, type_table, vtable, str_table, output)
 		}
 		Rpn::BinaryAnd(l, r) => {
-			binary_operation(l, "band", r, env, type_table, vtable, str_table, output)
+			binary_operation(*l, "band", *r, env, type_table, vtable, str_table, output)
 		}
 		Rpn::BinaryXor(l, r) => {
-			binary_operation(l, "bxor", r, env, type_table, vtable, str_table, output)
+			binary_operation(*l, "bxor", *r, env, type_table, vtable, str_table, output)
 		}
 		Rpn::BinaryOr(l, r) => {
-			binary_operation(l, "bor", r, env, type_table, vtable, str_table, output)
+			binary_operation(*l, "bor", *r, env, type_table, vtable, str_table, output)
 		}
-		Rpn::Equ(l, r) => binary_operation(l, "equ", r, env, type_table, vtable, str_table, output),
+		Rpn::Equ(l, r) => {
+			binary_operation(*l, "equ", *r, env, type_table, vtable, str_table, output)
+		}
 		Rpn::NotEqu(l, r) => {
-			binary_operation(l, "nequ", r, env, type_table, vtable, str_table, output)
+			binary_operation(*l, "nequ", *r, env, type_table, vtable, str_table, output)
 		}
 		Rpn::LessThan(l, r) => {
-			binary_operation(l, "lt", r, env, type_table, vtable, str_table, output)
+			binary_operation(*l, "lt", *r, env, type_table, vtable, str_table, output)
 		}
 		Rpn::GreaterThan(l, r) => {
-			binary_operation(l, "gt", r, env, type_table, vtable, str_table, output)
+			binary_operation(*l, "gt", *r, env, type_table, vtable, str_table, output)
 		}
 		Rpn::LessThanEqu(l, r) => {
-			binary_operation(l, "lte", r, env, type_table, vtable, str_table, output)
+			binary_operation(*l, "lte", *r, env, type_table, vtable, str_table, output)
 		}
 		Rpn::GreaterThanEqu(l, r) => {
-			binary_operation(l, "gte", r, env, type_table, vtable, str_table, output)
+			binary_operation(*l, "gte", *r, env, type_table, vtable, str_table, output)
 		}
 		Rpn::LogicalAnd(l, r) => {
-			binary_operation(l, "land", r, env, type_table, vtable, str_table, output)
+			binary_operation(*l, "land", *r, env, type_table, vtable, str_table, output)
 		}
 		Rpn::LogicalOr(l, r) => {
-			binary_operation(l, "lor", r, env, type_table, vtable, str_table, output)
+			binary_operation(*l, "lor", *r, env, type_table, vtable, str_table, output)
 		}
 		Rpn::Set(name, i) => {
 			// A plain Set may only assign to existing variables.
@@ -1184,11 +1192,7 @@ fn compile_statement<W: Write>(
 					"Expression has no return value",
 				)))?;
 
-			writeln!(
-				output,
-				"\tdb {}, {dest}, {source}",
-				env.expand(&format!("mov_u16"))?
-			)?;
+			writeln!(output, "\tdb {}, {dest}, {source}", env.expand("mov_u16")?)?;
 
 			vtable.autofree(source);
 		}
@@ -1214,7 +1218,7 @@ fn compile_statement<W: Write>(
 			}
 			vtable.pop_scope();
 
-			if let Some(..) = else_contents {
+			if else_contents.is_some() {
 				writeln!(
 					output,
 					"\tdb {}, LOW(.__end{l}), HIGH(.__end{l})",
@@ -1514,18 +1518,11 @@ fn compile_ast<W: Write>(
 	for i in ast {
 		match i {
 			types::Root::Environment(name, env) => {
-				let new_env = compile_environment(&name, env, &environment_table, output)?;
+				let new_env = compile_environment(&name, env, environment_table, output)?;
 				environment_table.insert(name, new_env);
 			}
 			types::Root::Function(name, func) => {
-				compile_function(
-					&name,
-					func,
-					&environment_table,
-					&type_table,
-					output,
-					&options,
-				)?;
+				compile_function(&name, func, environment_table, type_table, output, options)?;
 			}
 			types::Root::Assembly(contents) => {
 				writeln!(output, "{}", contents)?;

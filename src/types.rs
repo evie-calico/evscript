@@ -149,26 +149,20 @@ impl Rpn {
 	pub fn eval_const(&self) -> Result<i64, String> {
 		Ok(match self {
 			Rpn::Variable(..) => {
-				return Err(format!("Unexpected variable, expression must be constant"))
+				return Err("Unexpected variable, expression must be constant".to_string())
 			}
 			Rpn::String(..) => {
-				return Err(format!("Unexpected string, expression must be constant"))
+				return Err("Unexpected string, expression must be constant".to_string())
 			}
-			Rpn::Call(..) => return Err(format!("Unexpected call, expression must be constant")),
+			Rpn::Call(..) => return Err("Unexpected call, expression must be constant".to_string()),
 			Rpn::Deref(..) => {
-				return Err(format!(
-					"Unexpected dereference, expression must be constant"
-				))
+				return Err("Unexpected dereference, expression must be constant".to_string())
 			}
 			Rpn::Address(..) => {
-				return Err(format!(
-					"Unexpected address operator, expression must be constant"
-				))
+				return Err("Unexpected address operator, expression must be constant".to_string())
 			}
 			Rpn::Set(..) => {
-				return Err(format!(
-					"Unexpected assignment, expression must be constant"
-				))
+				return Err("Unexpected assignment, expression must be constant".to_string())
 			}
 
 			Rpn::Signed(value) => *value,

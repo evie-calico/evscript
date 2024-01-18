@@ -53,7 +53,7 @@ fn main() {
 					(String::from("Invalid token"), Some(location..location))
 				}
 				ParseError::UnrecognizedEof { location, expected } => {
-					let mut message = format!("Unexpected EOF, expected one of:");
+					let mut message = "Unexpected EOF, expected one of:".to_string();
 					for i in expected {
 						message += " ";
 						message += &i;
@@ -88,9 +88,8 @@ fn main() {
 
 			let writer = StandardStream::stderr(ColorChoice::Auto);
 			let config = term::Config::default();
-			match term::emit(&mut writer.lock(), &config, &files, &diagnostic) {
-				Err(err) => eprintln!("Failed to print error: {err}"),
-				_ => {}
+			if let Err(err) = term::emit(&mut writer.lock(), &config, &files, &diagnostic) {
+				eprintln!("Failed to print error: {err}");
 			}
 			exit(1);
 		}
@@ -113,9 +112,8 @@ fn main() {
 
 		let writer = StandardStream::stderr(ColorChoice::Auto);
 		let config = term::Config::default();
-		match term::emit(&mut writer.lock(), &config, &files, &diagnostic) {
-			Err(err) => eprintln!("Failed to print error: {err}"),
-			_ => {}
+		if let Err(err) = term::emit(&mut writer.lock(), &config, &files, &diagnostic) {
+			eprintln!("Failed to print error: {err}");
 		}
 		exit(1);
 	}
