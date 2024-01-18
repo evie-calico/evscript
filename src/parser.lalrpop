@@ -13,14 +13,14 @@ match {
 	"=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=",
 	"...", "$", ":",
 	"(", ")", "{", "}", "[", "]",
-	r"[a-zA-Z_][a-zA-Z0-9_.]*",
-	r#""([^"]|\.)*""#,
-	r"-?[0-9]+",
+	r"[a-zA-Z_][a-zA-Z0-9_.]*" => identifier,
+	r#""([^"]|\.)*""# => string,
+	r"-?[0-9]+" => number,
 	";", ",",
 	"env", "use", "include", "def", "alias", "macro", "pool", "const",
 	"return", "yield", "typedef", "struct", "ptr",
 	"if", "else", "while", "do", "for", "repeat", "loop",
-	r"#asm[^#]*#end",
+	r"#asm[^#]*#end" => raw_assembly,
 
 	// Skip whitespace and comments
 	r"\s*" => { },
@@ -37,7 +37,7 @@ Root: Root = {
 	"env" <name:Iden> "{" <contents:Statement*> "}" => {
 		Root::Environment( name, Environment { contents } )
 	},
-	r"#asm[^#]*#end" =>? {
+	raw_assembly =>? {
 		let mut bytes = <>.bytes().collect::<VecDeque<u8>>();
 		bytes.pop_front();
 		bytes.pop_front();
@@ -98,7 +98,7 @@ DefinitionParam: DefinitionParam = {
 }
 
 AliasParam: AliasParam = {
-	"$" <i:r"-?[0-9]+"> =>? Ok(AliasParam::ArgId(usize::from_str(i)
+	"$" <i:number> =>? Ok(AliasParam::ArgId(usize::from_str(i)
 		.map_err(|_| ParseError::User {
 			error: "Argument index is too large"
 		})?)),
@@ -335,18 +335,18 @@ Term: Rpn = {
 };
 
 Num: Rpn = {
-	r"-?[0-9]+" =>? Ok(Rpn::Signed(i64::from_str(<>)
+	number =>? Ok(Rpn::Signed(i64::from_str(<>)
 		.map_err(|_| ParseError::User {
 			error: "Integer is too large (maximum of 64 bits, signed)"
 		})?)),
 };
 
 Iden: String = {
-	r"[a-zA-Z_][a-zA-Z0-9_.]*" => String::from(<>),
+	identifier => String::from(<>),
 };
 
 String: String = {
-	r#""([^"]|\.)*""# =>? {
+	string =>? {
 		let mut bytes = <>.bytes().collect::<VecDeque<u8>>();
 		bytes.pop_front();
 		bytes.pop_back();
