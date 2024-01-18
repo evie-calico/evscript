@@ -33,14 +33,20 @@ pub enum Root {
 	Function(String, Function),
 	Assembly(String),
 	Include(String),
-	Typedef { name: String, t: String },
-	Struct { name: String, contents: Vec<StructMember> },
+	Typedef {
+		name: String,
+		t: String,
+	},
+	Struct {
+		name: String,
+		contents: Vec<StructMember>,
+	},
 }
 
 // Top-level statements.
 #[derive(Debug)]
 pub struct Environment {
-	pub contents: Vec<Statement>
+	pub contents: Vec<Statement>,
 }
 
 #[derive(Debug)]
@@ -54,7 +60,7 @@ pub struct Function {
 #[derive(Debug)]
 pub struct StructMember {
 	pub name: String,
-	pub t: String
+	pub t: String,
 }
 
 // Environment statements
@@ -142,12 +148,28 @@ pub enum Rpn {
 impl Rpn {
 	pub fn eval_const(&self) -> Result<i64, String> {
 		Ok(match self {
-			Rpn::Variable(..) => return Err(format!("Unexpected variable, expression must be constant")),
-			Rpn::String(..) => return Err(format!("Unexpected string, expression must be constant")),
+			Rpn::Variable(..) => {
+				return Err(format!("Unexpected variable, expression must be constant"))
+			}
+			Rpn::String(..) => {
+				return Err(format!("Unexpected string, expression must be constant"))
+			}
 			Rpn::Call(..) => return Err(format!("Unexpected call, expression must be constant")),
-			Rpn::Deref(..) => return Err(format!("Unexpected dereference, expression must be constant")),
-			Rpn::Address(..) => return Err(format!("Unexpected address operator, expression must be constant")),
-			Rpn::Set(..) => return Err(format!("Unexpected assignment, expression must be constant")),
+			Rpn::Deref(..) => {
+				return Err(format!(
+					"Unexpected dereference, expression must be constant"
+				))
+			}
+			Rpn::Address(..) => {
+				return Err(format!(
+					"Unexpected address operator, expression must be constant"
+				))
+			}
+			Rpn::Set(..) => {
+				return Err(format!(
+					"Unexpected assignment, expression must be constant"
+				))
+			}
 
 			Rpn::Signed(value) => *value,
 
