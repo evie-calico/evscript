@@ -1514,11 +1514,21 @@ fn compile_ast<W: Write>(
 	type_table: &mut TypeTable,
 	output: &mut W,
 	options: &CompilerOptions,
+	// Only true if this file was not `include`d.
+	// Used for outputting pool sizes.
+	is_root: bool,
 ) -> Result<(), CompilerError> {
 	for i in ast {
 		match i {
 			types::Root::Environment(name, env) => {
 				let new_env = compile_environment(&name, env, environment_table, output)?;
+				if is_root {
+					writeln!(
+						output,
+						"def {name}__pool_size equ {}\nexport {name}__pool_size",
+						new_env.pool
+					)?;
+				}
 				environment_table.insert(name, new_env);
 			}
 			types::Root::Function(name, func) => {
@@ -1544,7 +1554,9 @@ fn compile_ast<W: Write>(
 					}
 				};
 
-				if let Err(err) = compile_ast(ast, environment_table, type_table, output, options) {
+				if let Err(err) =
+					compile_ast(ast, environment_table, type_table, output, options, false)
+				{
 					eprintln!("{path}: {err}");
 					exit(1);
 				}
@@ -1601,5 +1613,7 @@ pub fn compile<W: Write>(
 		&mut type_table,
 		output,
 		&options,
-	)
+		true,
+	)?;
+	Ok(())
 }
