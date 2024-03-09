@@ -5,10 +5,8 @@ use crate::types::StatementType;
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use std::convert::From;
-use std::fmt;
+use std::fmt::{self, Write};
 use std::fs::read_to_string;
-use std::io::Write;
 use std::process::exit;
 
 pub struct CompilerError {
@@ -37,8 +35,8 @@ impl From<String> for CompilerError {
 	}
 }
 
-impl From<std::io::Error> for CompilerError {
-	fn from(msg: std::io::Error) -> Self {
+impl From<std::fmt::Error> for CompilerError {
+	fn from(msg: std::fmt::Error) -> Self {
 		CompilerError {
 			msg: msg.to_string(),
 			start: None,

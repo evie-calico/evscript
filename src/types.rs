@@ -1,5 +1,3 @@
-use std::vec::Vec;
-
 #[derive(Debug)]
 pub struct Statement {
 	pub t: StatementType,

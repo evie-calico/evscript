@@ -6,8 +6,7 @@ use codespan_reporting::term::termcolor::{ColorChoice, StandardStream};
 use evscript::compiler::CompilerOptions;
 use lalrpop_util::ParseError;
 
-use std::fs::read_to_string;
-use std::fs::File;
+use std::fs::{self, read_to_string};
 use std::process::exit;
 
 #[derive(Parser)]
@@ -33,14 +32,6 @@ fn main() {
 		Ok(input) => input,
 		Err(err) => {
 			eprintln!("{}: {err}", cli.input);
-			exit(1);
-		}
-	};
-
-	let mut output = match File::create(&cli.output) {
-		Ok(f) => f,
-		Err(err) => {
-			eprintln!("{}: {err}", cli.output);
 			exit(1);
 		}
 	};
@@ -98,6 +89,7 @@ fn main() {
 	let mut compiler_options = CompilerOptions::new();
 	compiler_options.report_usage = cli.report_usage;
 
+	let mut output = String::new();
 	if let Err(err) = evscript::compile(ast, &cli.input, &mut output, compiler_options) {
 		let mut files = SimpleFiles::new();
 		let file_id = files.add(&cli.input, input);
@@ -116,5 +108,9 @@ fn main() {
 			eprintln!("Failed to print error: {err}");
 		}
 		exit(1);
+	}
+
+	if let Err(msg) = fs::write(&cli.output, output) {
+		eprintln!("Failed to write output file ({}): {msg}", cli.output);
 	}
 }
