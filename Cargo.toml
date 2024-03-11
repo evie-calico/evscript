@@ -2,6 +2,10 @@
 name = "evscript"
 version = "0.1.0"
 edition = "2021"
+description = "An extensible bytecode-based scripting engine"
+homepage = "https://github.com/eievui5/evscript"
+repository = "https://github.com/eievui5/evscript"
+readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
