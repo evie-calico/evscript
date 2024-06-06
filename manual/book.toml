@@ -1,0 +1,6 @@
+[book]
+authors = ["ISSOtm"]
+language = "en"
+multilingual = false
+src = "src"
+title = "evscript User's Handbook"
